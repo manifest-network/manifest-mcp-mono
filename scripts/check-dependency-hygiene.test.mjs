@@ -75,7 +75,7 @@ test('dependency evidence guard rejects drift, missing artifacts and nested vers
   const location = 'node_modules/@confio/ics23';
   for (const mutate of [
     (lock) => {
-      lock.packages[location].version = '0.6.10';
+      lock.packages[location].version += '-unreviewed';
     },
     (lock) => {
       lock.packages[location].integrity = 'sha512-different-artifact';
@@ -92,7 +92,7 @@ test('dependency evidence guard rejects drift, missing artifacts and nested vers
     (lock) => {
       lock.packages[`node_modules/nested/${location}`] = {
         ...lock.packages[location],
-        version: '0.6.10',
+        version: `${lock.packages[location].version}-unreviewed`,
       };
     },
   ]) {

@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@manifest-network/manifest-sdk": "0.22.0",
-    "@manifest-network/manifestjs": "3.0.1"
+    "@manifest-network/manifestjs": "4.0.0"
   },
   "devDependencies": {
     "rolldown": "1.2.5",

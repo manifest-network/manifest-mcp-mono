@@ -6,6 +6,14 @@ standing CI/release gates. Monorepo overrides do not propagate to consumers
 repaired declarations, fork provenance limits, upstream advisory-review obligation,
 and the temporary mitigation for applications still on v0.22.0.
 
+This unreleased branch adopts ManifestJS `4.0.0`, Stargate `0.32.4-ll.5`, LCD
+`0.14.7` and ICS23 `0.6.10`. Their protected source release runs and exact source
+commits are recorded in the [dependency rollout](dependency-consumers.md#adopted-dependency-releases-and-remaining-rollout).
+Their public artifact hashes and signed provenance have been verified; ManifestJS
+verification completed locally after the CI registry-availability retries expired.
+The public SDK/CLI v0.22.0 packages still need a coordinated successor; these
+dependency publications do not update already published SDK/core declarations.
+
 ## Automated gates
 
 `npm run audit:dependencies` audits the locked production and development graph,
@@ -34,10 +42,11 @@ alias and `ipaddr.js` overrides; Axios/protobufjs now have compatible repaired
 declarations and no override. Update their lockfile resolutions normally instead
 of retaining an exact override that blocks compatible fixes.
 
-The 2026-09-21 fresh-consumer baseline is zero high/critical findings, with 11 low
-affected package entries for the SDK and 15 for the CLI. These are parent rollups
-of `elliptic` (`GHSA-848j-6mx2-7j84`), not independent vulnerabilities. Repository
+The historical 2026-09-21 manual-artifact consumer baseline was zero high/critical
+findings, with 11 low affected package entries for the SDK and 15 for the CLI.
+These are parent rollups of `elliptic` (`GHSA-848j-6mx2-7j84`), not independent vulnerabilities. Repository
 and consumer counts cover different graphs and are point-in-time measurements.
+That baseline does not establish the results of the new adoption gates.
 The crypto migration remains ENG-808. npm audit does not automatically cover
 renamed forks under their original package names: the release/dependency-update
 maintainer must also perform the [upstream advisory review](dependency-consumers.md#fork-advisory-coverage).
@@ -59,7 +68,8 @@ version, integrity, URL and dependency declarations, including nested copies.
 An intentional fork update must refresh this adoption record and its provenance
 assessment; an unrelated lockfile update must not silently detach the evidence.
 This consistency check does not create or verify build provenance. The four
-initial repair releases block SDK publication and are [explicitly recorded as unattested](dependency-consumers.md#publication-provenance-and-release-gate).
+initial manual repair releases are [historical, unattested artifacts](dependency-consumers.md#publication-provenance-and-release-gate),
+superseded in the adopted graph rather than accepted through an exception.
 
 The dependency-cruiser positive controls scan the full workspace graph. Each scan
 has a 30-second subprocess deadline within a 45-second test deadline, so the
@@ -74,8 +84,9 @@ merge time; this is separate from the checked-in workflow definitions.
 Release also runs `check:dependency-provenance` with npm 11.19.1 against the
 repository and both fresh consumers. It requires cryptographically verified npm
 bundles bound to the exact reviewed artifact, source commit and workflow identity.
-The current manual dependency releases intentionally fail; their previous
-publication exception is withdrawn. Offline regression tests run in PR CI.
+The historical manual dependency releases remain unacceptable; their previous
+publication exception remains withdrawn. The adopted successors must pass with
+their own exact source identities and digests. Offline regression tests run in PR CI.
 The emergency audit process below does not waive this provenance requirement.
 
 ## Consumer gate recovery

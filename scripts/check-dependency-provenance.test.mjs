@@ -59,7 +59,7 @@ test('review record binds all four actual locked fork artifacts to reviewed sour
       record.packages[0].source.sha = 'main';
     },
     (record) => {
-      record.packages[0].version = '0.14.7';
+      record.packages[0].version += '-unreviewed';
     },
     (record) => {
       record.packages[0].integrity = `sha512-${Buffer.alloc(64).toString('base64')}`;
@@ -72,7 +72,7 @@ test('review record binds all four actual locked fork artifacts to reviewed sour
   const changed = structuredClone(lock);
   changed.packages['node_modules/nested/node_modules/@cosmology/lcd'] = {
     ...changed.packages['node_modules/@cosmology/lcd'],
-    version: '0.14.7',
+    version: `${changed.packages['node_modules/@cosmology/lcd'].version}-unreviewed`,
   };
   assert.throws(
     () => provenanceExpectations(evidence, changed),
@@ -162,10 +162,41 @@ test('offline policy fixtures accept known verified bundle bytes and reject iden
   }
 });
 
-test('current manual packages have no standing provenance exception', () => {
-  assert.equal(evidence.provenance.releaseAccepted, false);
-  assert.equal(evidence.provenance.acceptanceScope, undefined);
-  for (const expected of provenanceExpectations(evidence, lock)) {
+test('historical manual publications and current artifacts have no provenance exception', () => {
+  // These exact legacy artifacts were manually published without attestations.
+  // Their recorded source commits are claims, not verified source identities.
+  const historicalArtifacts = {
+    '@manifest-network/lcd': {
+      version: '0.14.6',
+      integrity:
+        'sha512-DN8B5ZBJloYyndToPjzG1RGVvzcHkHFTX7L/5tqfTB6tDzd/jQkdqqBMm/lAWS08bQCNRrjF6TllTzFll4z+lw==',
+      sha: '5df11dcf6c41db000355ab0214c7ee091392a972',
+    },
+    '@manifest-network/ics23': {
+      version: '0.6.9',
+      integrity:
+        'sha512-SrxZiZt6JPxoFfAwa8UytlIp8ttBb3e3mauhZtldU14CZCDPDYXFjNTknS0DGbmQk/Sk4vSWEdlD1aNcbecDXQ==',
+      sha: 'd9ec2a47735d252fdda90f7aaeddd8eec4d3cee7',
+    },
+    '@manifest-network/stargate': {
+      version: '0.32.4-ll.4',
+      integrity:
+        'sha512-tFe6rjukHDAIJQvxew2hZc/srQ6buTrPKFThIvJp+MxZ64XMs7fHr1UF+q9Sj8WNT5YNw/pEnoMBMK/4Y4sA+Q==',
+      sha: 'd9ec2a47735d252fdda90f7aaeddd8eec4d3cee7',
+    },
+    '@manifest-network/manifestjs': {
+      version: '3.0.1',
+      integrity:
+        'sha512-0yxioP3C3OftE+EvLBqsHOGl190329a3dv8dKbb32vEWFpRZdSLzxvSzpAklL7H/GiRYnnHyHM00IXpLFhmckQ==',
+      sha: '5df11dcf6c41db000355ab0214c7ee091392a972',
+    },
+  };
+  const current = provenanceExpectations(evidence, lock);
+  const historical = current.map((expected) => ({
+    ...expected,
+    ...historicalArtifacts[expected.name],
+  }));
+  for (const expected of [...historical, ...current]) {
     assert.throws(
       () =>
         assertVerifiedProvenance(

@@ -1,12 +1,12 @@
 {
-  "verifiedAt": "2026-09-21T14:21:38.255Z",
+  "verifiedAt": "2026-09-22T13:02:24.038542+00:00",
   "registry": "https://registry.npmjs.org",
   "packages": [
     {
       "name": "@manifest-network/lcd",
-      "version": "0.14.6",
-      "integrity": "sha512-DN8B5ZBJloYyndToPjzG1RGVvzcHkHFTX7L/5tqfTB6tDzd/jQkdqqBMm/lAWS08bQCNRrjF6TllTzFll4z+lw==",
-      "tarball": "https://registry.npmjs.org/@manifest-network/lcd/-/lcd-0.14.6.tgz",
+      "version": "0.14.7",
+      "integrity": "sha512-8aEkL9AWBgv8zWsnKIHZptQENFcKAZTg5xpR/JmGfVZCLbymCV1PV/Dy6onC3umxROymybauk8mpAvcBdYeXCQ==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/lcd/-/lcd-0.14.7.tgz",
       "dependencies": {
         "axios": "^1.19.0"
       },
@@ -14,35 +14,35 @@
         "repository": "manifest-network/manifestjs",
         "workflow": ".github/workflows/release.yaml",
         "ref": "refs/heads/main",
-        "sha": "5df11dcf6c41db000355ab0214c7ee091392a972"
+        "sha": "c69387ceefcb23165c58c92aee123c97dce3e9e9"
       }
     },
     {
       "name": "@manifest-network/ics23",
-      "version": "0.6.9",
-      "integrity": "sha512-SrxZiZt6JPxoFfAwa8UytlIp8ttBb3e3mauhZtldU14CZCDPDYXFjNTknS0DGbmQk/Sk4vSWEdlD1aNcbecDXQ==",
-      "tarball": "https://registry.npmjs.org/@manifest-network/ics23/-/ics23-0.6.9.tgz",
+      "version": "0.6.10",
+      "integrity": "sha512-L1TMv+nh1TeoQZI6szukVmLdVzNMVA5I7d7MAgmvlGD4lgH58w330YgK/B7cHDHUFbKEBhow+hBz9Ayte1FGGQ==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/ics23/-/ics23-0.6.10.tgz",
       "dependencies": {
-        "@noble/hashes": "^1.0.0",
-        "protobufjs": "^7.6.5"
+        "protobufjs": "^7.6.5",
+        "@noble/hashes": "^1.0.0"
       },
       "source": {
         "repository": "manifest-network/cosmjs",
         "workflow": ".github/workflows/manifest-release.yml",
         "ref": "refs/heads/manifest/0.32",
-        "sha": "d9ec2a47735d252fdda90f7aaeddd8eec4d3cee7"
+        "sha": "e464b5c21ae097e06e5505b7a8d3834359199840"
       }
     },
     {
       "name": "@manifest-network/stargate",
-      "version": "0.32.4-ll.4",
-      "integrity": "sha512-tFe6rjukHDAIJQvxew2hZc/srQ6buTrPKFThIvJp+MxZ64XMs7fHr1UF+q9Sj8WNT5YNw/pEnoMBMK/4Y4sA+Q==",
-      "tarball": "https://registry.npmjs.org/@manifest-network/stargate/-/stargate-0.32.4-ll.4.tgz",
+      "version": "0.32.4-ll.5",
+      "integrity": "sha512-jT/ooQaz3Vqm3/uRWnXdc0jPaJk6RX001VInmwEUnsckBtDgV6jclk71lDV7lPq2PwKm1ebVSV2tL1h2dfxNcg==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/stargate/-/stargate-0.32.4-ll.5.tgz",
       "dependencies": {
         "xstream": "^11.14.0",
         "@cosmjs/math": "^0.32.4",
         "cosmjs-types": "^0.9.0",
-        "@confio/ics23": "npm:@manifest-network/ics23@^0.6.9",
+        "@confio/ics23": "npm:@manifest-network/ics23@^0.6.10",
         "@cosmjs/amino": "^0.32.4",
         "@cosmjs/utils": "^0.32.4",
         "@cosmjs/stream": "^0.32.4",
@@ -54,19 +54,19 @@
         "repository": "manifest-network/cosmjs",
         "workflow": ".github/workflows/manifest-release.yml",
         "ref": "refs/heads/manifest/0.32",
-        "sha": "d9ec2a47735d252fdda90f7aaeddd8eec4d3cee7"
+        "sha": "f700b2f6268b1ee0fb41a133b1719a889f632754"
       }
     },
     {
       "name": "@manifest-network/manifestjs",
-      "version": "3.0.1",
-      "integrity": "sha512-0yxioP3C3OftE+EvLBqsHOGl190329a3dv8dKbb32vEWFpRZdSLzxvSzpAklL7H/GiRYnnHyHM00IXpLFhmckQ==",
-      "tarball": "https://registry.npmjs.org/@manifest-network/manifestjs/-/manifestjs-3.0.1.tgz",
+      "version": "4.0.0",
+      "integrity": "sha512-UfK1lteQ/gNpHjAUVY/z/xMJ38XNAQCFeiFZIZB046hUfpUI0AXlBSZzTFFls4dl68A9lTxNuJXTap4BxTOhgw==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifestjs/-/manifestjs-4.0.0.tgz",
       "dependencies": {
         "@cosmjs/amino": "^0.32.4",
-        "@cosmology/lcd": "npm:@manifest-network/lcd@^0.14.6",
+        "@cosmology/lcd": "npm:@manifest-network/lcd@^0.14.7",
         "@cosmjs/encoding": "^0.32.4",
-        "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.4",
+        "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.5",
         "@cosmjs/proto-signing": "^0.32.4",
         "@cosmjs/tendermint-rpc": "^0.32.4"
       },
@@ -74,14 +74,16 @@
         "repository": "manifest-network/manifestjs",
         "workflow": ".github/workflows/release.yaml",
         "ref": "refs/heads/main",
-        "sha": "5df11dcf6c41db000355ab0214c7ee091392a972"
+        "sha": "1c79ad8c9f968aa5cf3c7955e8b5db28a6ab2f0b"
       }
     }
   ],
   "consumers": [
     {
       "target": "@manifest-network/manifest-sdk",
+      "source": "workspace",
       "passes": true,
+      "identityPasses": true,
       "vulnerabilities": {
         "info": 0,
         "low": 11,
@@ -95,7 +97,9 @@
     },
     {
       "target": "@manifest-network/manifest-mcp-node",
+      "source": "workspace",
       "passes": true,
+      "identityPasses": true,
       "vulnerabilities": {
         "info": 0,
         "low": 15,
@@ -108,27 +112,59 @@
       "smokePasses": true
     }
   ],
-  "consumerScope": "Locally packed, unreleased SDK/CLI from the repair branch; upstream dependencies installed from public npm without consumer overrides.",
+  "consumerScope": "Locally packed SDK/CLI rebuilt from this adoption branch, using verified public npm dependencies without consumer overrides. All nine packed artifacts match the stable source rebuild; SDK/CLI have shared Stargate constructor and decoder identities.",
   "sourceCommits": {
-    "cosmjs": "d9ec2a47735d252fdda90f7aaeddd8eec4d3cee7",
-    "manifestjs": "5df11dcf6c41db000355ab0214c7ee091392a972"
+    "lcd": "c69387ceefcb23165c58c92aee123c97dce3e9e9",
+    "ics23": "e464b5c21ae097e06e5505b7a8d3834359199840",
+    "stargate": "f700b2f6268b1ee0fb41a133b1719a889f632754",
+    "manifestjs": "1c79ad8c9f968aa5cf3c7955e8b5db28a6ab2f0b"
   },
   "remainingRuntimeAdvisories": [
     "https://github.com/advisories/GHSA-848j-6mx2-7j84"
   ],
   "provenance": {
-    "status": "unattested",
-    "publisher": "fmorency_",
-    "publicationMethod": "manual npm publish",
-    "metadataCheckedAt": "2026-09-21T15:28:46.374715+00:00",
-    "sourceCommitsAreAttested": false,
-    "followUp": "Review and merge CI workflows, configure exact npm trusted publishers, publish new attested versions, then update the package/version/integrity/source allowlist and coordinated SDK declarations. Existing versions cannot acquire provenance retroactively.",
-    "releaseAccepted": false,
-    "releaseBlocker": "The four current versions have no source-to-artifact attestations. The previous manual-publication exception is withdrawn. New SDK/CLI publication requires coordinated successors with cryptographically verified provenance and reviewed source identities.",
-    "sourcePolicyNote": "The source fields define the required repository, workflow, repository-specific release ref (ManifestJS main; CosmJS manifest/0.32) and reviewed commit for the corresponding exact artifact. Current manual source references are not attestations and cannot pass the release gate; replace them with verified successor release commits when adopting new artifacts."
+    "status": "verified",
+    "publicationMethod": "GitHub Actions OIDC trusted publishing with npm provenance",
+    "metadataCheckedAt": "2026-09-22T12:52:46.765Z",
+    "sourceCommitsAreAttested": true,
+    "releaseAccepted": true,
+    "sourcePolicyNote": "Each exact artifact is bound to its reviewed commit and repository-specific workflow/ref. The gate requires successful cryptographic verification of the actual installed graph; historical manual publications have no exception.",
+    "publications": [
+      {
+        "name": "@manifest-network/lcd",
+        "run": "https://github.com/manifest-network/manifestjs/actions/runs/35650499591",
+        "workflowResult": "success",
+        "verification": "Pinned npm 11.19.1 cryptographic verification succeeded in the publication workflow."
+      },
+      {
+        "name": "@manifest-network/ics23",
+        "run": "https://github.com/manifest-network/cosmjs/actions/runs/35650590941",
+        "workflowResult": "success",
+        "verification": "Pinned npm 11.19.1 cryptographic verification succeeded in the publication workflow."
+      },
+      {
+        "name": "@manifest-network/stargate",
+        "run": "https://github.com/manifest-network/cosmjs/actions/runs/35653654841",
+        "workflowResult": "success",
+        "verification": "Pinned npm 11.19.1 cryptographic verification succeeded in the publication workflow."
+      },
+      {
+        "name": "@manifest-network/manifestjs",
+        "run": "https://github.com/manifest-network/manifestjs/actions/runs/35728806801",
+        "workflowResult": "failure",
+        "verification": "Pinned npm 11.19.1 verification succeeded locally after npm processing exceeded the CI availability retry window. The unchanged release verifier checked the public artifact against the successful CI build. No publication retry."
+      }
+    ],
+    "installedGraphsVerified": [
+      "repository",
+      "fresh packed SDK consumer",
+      "fresh packed CLI consumer"
+    ],
+    "verifier": "npm 11.19.1 audit signatures --json --include-attestations",
+    "acceptanceBasis": "All four exact public dependency artifacts passed cryptographic source/integrity policy in the repository and both freshly built SDK/CLI consumer graphs. This acceptance applies to these verified dependencies; the SDK/CLI still require the normal reviewed version and release process."
   },
   "upstreamAdvisoryReview": {
-    "checkedAt": "2026-09-21T15:28:46.374715+00:00",
+    "checkedAt": "2026-09-22T12:49:49.968391+00:00",
     "source": "GitHub global security advisories API",
     "query": {
       "ecosystem": "npm",
@@ -152,7 +188,7 @@
         "advisories": []
       }
     ],
-    "repositoryNoticesCheckedAt": "2026-09-21T15:41:38.508605+00:00",
+    "repositoryNoticesCheckedAt": "2026-09-22T12:49:50.965286+00:00",
     "repositories": [
       {
         "repository": "hyperweb-io/telescope",
@@ -169,16 +205,63 @@
         "url": "https://github.com/cosmos/cosmjs/security/advisories",
         "advisories": []
       }
-    ]
+    ],
+    "verification": "All six paginated gh API calls completed with exit code 0; each returned an empty advisory list."
   },
   "versionPlan": {
-    "status": "proposed-unpublished",
+    "status": "dependencies-verified-sdk-adoption-under-review",
     "lcd": "0.14.7",
     "ics23": "0.6.10",
     "stargate": "0.32.4-ll.5",
     "legacyManifestjs": "3.0.2",
     "repairedManifestjs": "4.0.0",
     "legacyScope": "Restore Stargate ll.3 identity for existing SDK ^3.0.0 consumers. This does not replace the old SDK core dependency or clear its security/provenance findings.",
-    "adoption": "Coordinated next SDK/core/CLI release must use ManifestJS 4 and Stargate ll.5 only after the artifacts pass release provenance and consumer gates."
+    "adoption": "This branch adopts ManifestJS4 and exact Stargate ll.5 together. Complete source-build, consumer and provenance validation, then review and release a coordinated SDK/core/CLI version.",
+    "legacyStatus": "Not published; separate optional legacy policy/review decision"
+  },
+  "repositoryAudit": {
+    "scope": "All locked production, development, optional, and peer dependencies",
+    "vulnerabilities": {
+      "low": 7,
+      "moderate": 4,
+      "high": 0,
+      "critical": 0
+    },
+    "gatePasses": true,
+    "remainingModeratePackages": [
+      "@vitest/mocker",
+      "vitest",
+      "@vitest/coverage-v8",
+      "hono"
+    ],
+    "note": "The repository retains existing pinned Vitest and Hono findings below the high/critical gate. Fresh production SDK/CLI consumers report no moderate findings. Counts include affected-parent rollups."
+  },
+  "validation": {
+    "sourceBuildPasses": true,
+    "cleanPublicNpmInstallPasses": true,
+    "coverage": {
+      "filesPassed": 205,
+      "testsPassed": 5539,
+      "testsSkipped": 17,
+      "typeErrors": 0,
+      "thresholdsPass": true
+    },
+    "checksPassed": [
+      "lint",
+      "E2E typecheck",
+      "Biome and schema consistency",
+      "nine packed package guards",
+      "dependency boundaries",
+      "workflow guards",
+      "coverage guard negative controls",
+      "root type-test harness",
+      "browser compatibility and tree-shaking",
+      "bundle size budgets",
+      "eight live CLI metadata checks",
+      "49 consumer and E2E-tooling regression tests",
+      "30 dependency hygiene and provenance regression tests"
+    ],
+    "consumerTarballsMatchStableRebuild": true,
+    "sdkCliPublished": false
   }
 }
