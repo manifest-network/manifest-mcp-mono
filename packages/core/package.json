@@ -94,7 +94,7 @@
     "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.5",
     "@manifest-network/manifestjs": "^4.0.0",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "ipaddr.js": "2.4.0",
+    "ipaddr.js": "2.5.0",
     "limiter": "3.0.0",
     "zod": "^4.3.6"
   },

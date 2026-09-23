@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **core:** update `ipaddr.js` to 2.5.0 and keep the repository override aligned with the published dependency.
+
 ## [0.23.0] - 2026-09-22
 
 ### Migration notes
