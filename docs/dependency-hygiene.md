@@ -213,8 +213,8 @@ size-limit measures them, the refresh adds 27,911 gzip bytes to `/deploy` and
 28,189 bytes to the root client. Most of that comes from how esbuild,
 size-limit's bundler, handles the `import { z } from 'zod'` form the packages
 use. `z` is a namespace object esbuild cannot tree-shake, so the bundle keeps
-every Zod locale (52 modules in 4.4.3, 63 in 4.6.5) and 4.6's new
-`v4/core/compile.js`. With Node 24.15.0 and esbuild 0.28.2, the dependency-only
+every Zod locale (52 modules in 4.4.3, 63 in 4.6.5) and the
+`v4/core/compile.js` added in Zod 4.5. With Node 24.15.0 and esbuild 0.28.2, the dependency-only
 probe `import { z } from 'zod'; console.log(z.object({name: z.string(), count: z.number().int()}))`,
 bundled as minified browser ESM and measured at Node's default `zlib.gzipSync`
 level, grows from 64,952 to 93,122 bytes. Written as `import * as z from 'zod'`,
