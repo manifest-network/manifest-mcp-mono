@@ -39,6 +39,13 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # tsdown 0.23 uses rolldown-plugin-dts 0.28, which drops the export
+      # statement from declarations, so TypeScript exports their private
+      # declarations (core `/faucet` advertised schemas that fail at ESM link
+      # time). `npm run check:packages` rejects that output. Remove this ignore
+      # once a tsdown 0.23+ build passes it.
+      - dependency-name: "tsdown"
+        versions: [">=0.23.0"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

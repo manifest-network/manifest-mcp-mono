@@ -55,6 +55,75 @@ test('sabotage: rejects undeclared dependencies in runtime JavaScript', () => {
   );
 });
 
+test('sabotage: rejects declarations that implicitly export private names', () => {
+  // rolldown-plugin-dts 0.28 (tsdown 0.23) emitted core's faucet.d.ts in this
+  // shape: inline exports, a private schema, and no export statement.
+  const path = 'dist/faucet.d.ts';
+  const source = [
+    "import { z } from 'zod';",
+    'declare const FaucetAccountSchema: z.ZodObject<{}>;',
+    'export type FaucetAccount = z.infer<typeof FaucetAccountSchema>;',
+    'export declare function requestFaucet(): Promise<void>;',
+  ].join('\n');
+  assert.deepEqual(inspect([path], { [path]: source }, { zod: '^4.3.6' }), [
+    '@example/package: dist/faucet.d.ts has no export statement, so TypeScript exposes private declarations FaucetAccountSchema',
+  ]);
+});
+
+test('sabotage: reports every kind of implicitly exported declaration', () => {
+  const path = 'dist/kinds.d.ts';
+  const source = [
+    'declare const first: number, second: string;',
+    'declare function run(): void;',
+    'declare class Runner {}',
+    'interface Shape {}',
+    'type Alias = Shape;',
+    'declare enum Mode { A }',
+    'declare namespace Space {}',
+    'export declare const visible: number;',
+  ].join('\n');
+  assert.deepEqual(inspect([path], { [path]: source }), [
+    '@example/package: dist/kinds.d.ts has no export statement, so TypeScript exposes private declarations first, second, run, Runner, Shape, Alias, Mode, Space',
+  ]);
+});
+
+test('accepts private declarations behind an explicit export statement', () => {
+  const path = 'dist/index.d.ts';
+  for (const statement of [
+    'export { Value };',
+    'export {};',
+    'export = Schema;',
+    "export * from './other.js';",
+  ]) {
+    const source = [
+      'declare const Schema: number;',
+      'type Value = typeof Schema;',
+      statement,
+    ].join('\n');
+    assert.deepEqual(inspect([path], { [path]: source }), [], statement);
+  }
+});
+
+test('accepts inline-only exports, imports, and scope augmentations', () => {
+  const path = 'dist/index.d.ts';
+  const source = [
+    "import { z } from 'zod';",
+    "import Legacy = require('legacy');",
+    'export declare const schema: z.ZodString;',
+    'export interface Shape { value: Legacy.Value }',
+    "declare module 'other' { interface Extra { value: number } }",
+    'declare global { interface Window { value: number } }',
+  ].join('\n');
+  assert.deepEqual(
+    inspect(
+      [path],
+      { [path]: source },
+      { zod: '^4.3.6', legacy: '1.0.0', other: '1.0.0' },
+    ),
+    [],
+  );
+});
+
 test('sabotage: declarations cover require() and triple-slash type references', () => {
   const path = 'dist/index.d.ts';
   const source = [

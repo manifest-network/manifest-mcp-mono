@@ -20,7 +20,7 @@ npm run check:consumers # Fresh packed SDK/CLI installs: audit, shared identitie
 npm run check:dependency-provenance # Release-only verified artifact/source policy; requires npm 11.19.1
 npm run depcruise      # Architecture boundary + package-DAG guard (dependency-cruiser); CI runs it
 npm run size           # Bundle-size budgets for the SDK subpaths (size-limit); CI runs it
-npm run check:packages # Dry-run npm packs; reject test/runtime vendoring + undeclared SDK d.ts imports
+npm run check:packages # Dry-run npm packs; reject test/runtime vendoring, undeclared SDK d.ts imports + d.ts files lacking an export statement (implicit private exports)
 npm run test:types -w @manifest-network/manifest-sdk   # SDK type-tripwire (.test-d.ts); CI runs it
 npm run build -w @manifest-network/sdk-acceptance      # then the browser-build gate below; CI runs both
 npx vitest run examples/sdk-acceptance/scripts/browser-build.test.ts  # browser resolution + /reads leak guard
