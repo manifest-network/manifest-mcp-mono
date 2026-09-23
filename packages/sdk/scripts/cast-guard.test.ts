@@ -133,24 +133,29 @@ describe('§8 brand-cast + lcd-adapter chokepoint (grep meta-test; ENG-309)', ()
 // The exhaustive probe cruise exceeded the previous 30 s cap under that load;
 // retain a finite hang guard without treating host throughput as an assertion.
 const CRUISE_TIMEOUT_MS = 60_000;
+// Follow the package's declared CLI entry when upstream reorganizes its files.
+const cruiserManifestPath = join(
+  ROOT,
+  'node_modules/dependency-cruiser/package.json',
+);
+const cruiserManifest: { bin: { depcruise: string } } = JSON.parse(
+  readFileSync(cruiserManifestPath, 'utf8'),
+);
+const cruiserBin = join(
+  dirname(cruiserManifestPath),
+  cruiserManifest.bin.depcruise,
+);
 
 /** Run depcruise from the repo root, capturing its exit code and combined output. */
 function cruise(args: string[]): { exitCode: number; output: string } {
   const started = Date.now();
   try {
-    const output = execFileSync(
-      process.execPath,
-      [
-        join(ROOT, 'node_modules/dependency-cruiser/bin/dependency-cruise.mjs'),
-        ...args,
-      ],
-      {
-        cwd: ROOT,
-        encoding: 'utf8',
-        timeout: CRUISE_TIMEOUT_MS,
-        maxBuffer: 8 * 1024 * 1024,
-      },
-    );
+    const output = execFileSync(process.execPath, [cruiserBin, ...args], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: CRUISE_TIMEOUT_MS,
+      maxBuffer: 8 * 1024 * 1024,
+    });
     return { exitCode: 0, output };
   } catch (err) {
     // depcruise's exit code is its count of error-severity violations.
