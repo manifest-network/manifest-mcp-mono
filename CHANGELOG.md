@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **core, chain, lease, fred, cosmwasm, agent:** require Zod 4.6.5 or later within v4. SDK deploy/root browser bundles grow by about 28 kB gzipped; size budgets retain their previous headroom.
 
+### Fixed
+
+- **core:** update the optional Node.js transports to `ws` 8.21.3 and `undici` 8.10.2, including Undici's upstream security fixes.
+
 ## [0.23.0] - 2026-09-22
 
 ### Migration notes
