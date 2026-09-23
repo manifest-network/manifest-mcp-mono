@@ -106,7 +106,7 @@
     "@types/node": "22.20.4",
     "@types/ws": "8.18.1",
     "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "vitest": "5.0.1"
   },
   "peerDependencies": {
     "vitest": "^4.1.0"
