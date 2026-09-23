@@ -95,7 +95,7 @@
     "@manifest-network/manifestjs": "^4.0.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "ipaddr.js": "2.5.0",
-    "limiter": "3.0.0",
+    "limiter": "4.1.0",
     "zod": "^4.3.6"
   },
   "optionalDependencies": {
