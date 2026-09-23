@@ -209,19 +209,19 @@ tree-shaking settings change for this adjustment.
 
 The 2026-09-23 Zod refresh from 4.4.3 to 4.6.5 changes only the lockfile: the
 published `^4.3.6` range already admits 4.6.5 and stays unchanged. As
-size-limit measures them, the refresh adds 27,911 gzip bytes to `/deploy` and
+size-limit measures them, the refresh adds 27,962 gzip bytes to `/deploy` and
 28,189 bytes to the root client. Most of that comes from how esbuild,
 size-limit's bundler, handles the `import { z } from 'zod'` form the packages
 use. `z` is a namespace object esbuild cannot tree-shake, so the bundle keeps
 every Zod locale (52 modules in 4.4.3, 63 in 4.6.5) and the
-`v4/core/compile.js` added in Zod 4.5. With Node 24.15.0 and esbuild 0.28.2, the dependency-only
-probe `import { z } from 'zod'; console.log(z.object({name: z.string(), count: z.number().int()}))`,
+`v4/core/compile.js` added in Zod 4.5. With Node 24.15.0 and esbuild 0.28.2,
+the dependency-only probe `import { z } from 'zod'; console.log(z.object({name: z.string(), count: z.number().int()}))`,
 bundled as minified browser ESM and measured at Node's default `zlib.gzipSync`
 level, grows from 64,952 to 93,122 bytes. Written as `import * as z from 'zod'`,
-the same probe grows from 19,456 to 26,023 bytes. Rolldown 1.2.5 keeps at most
+the same probe grows from 19,456 to 26,023 bytes. Rolldown 1.2.9 keeps at most
 one locale and no compiler for the SDK entries. At gzip level 9 its `/deploy`
-bundle grows from 1,034,399 to 1,041,216 bytes (+6,817) and its root-client
-bundle from 1,024,076 to 1,030,487 (+6,411). Changing the packages' Zod import
+bundle grows from 1,036,522 to 1,043,261 bytes (+6,739) and its root-client
+bundle from 1,026,206 to 1,032,513 (+6,307). Changing the packages' Zod import
 form could lower both esbuild budgets and is left to a follow-up. No
 application imports or bundler settings change; this is an accepted
 dependency-size increase.
@@ -230,7 +230,7 @@ dependency-size increase.
 | --- | ---: | ---: | ---: | ---: |
 | `/reads` | 26,073 | 26,073 | 27,460 | 1,387 |
 | `/catalog` | 27,770 | 27,770 | 27,790 | 20 |
-| `/deploy` | 1,089,043 | 1,116,954 | 1,117,550 | 596 |
+| `/deploy` | 1,089,049 | 1,117,011 | 1,117,601 | 590 |
 | root client | 1,078,429 | 1,106,618 | 1,106,953 | 335 |
 
 The two affected budgets rise only by the measured dependency delta. The browser

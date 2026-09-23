@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **core:** update `ipaddr.js` to 2.5.0 and keep the repository override aligned with the published dependency. The SSRF classifiers now reject IPv6 text that RFC 4291 does not allow: a group longer than four hex digits, or `::` that compresses no groups. For such input `isBlocked` throws, which its contract requires callers to treat as blocked. `isIpLiteral` returns `false`, so a caller that passes non-literals through as DNS names would now treat such raw text as a hostname; pass only hosts taken from a parsed URL, which never contain this text. No in-repo verdict changes.
-- **deps:** refresh the locked Zod from 4.4.3 to 4.6.5 within the existing `^4.3.6` range; published dependency ranges are unchanged. The SDK `/deploy` and root-client size budgets rise by the measured esbuild growth of about 28 kB gzipped and keep their previous headroom. Tree-shaking bundlers such as Rolldown add about 7 kB. See [bundle measurements](docs/dependency-hygiene.md#bundle-measurements).
+- **deps:** refresh the locked Zod from 4.4.3 to 4.6.5 within the existing `^4.3.6` range; published dependency ranges are unchanged. The SDK `/deploy` and root-client size budgets rise by the measured esbuild growth of about 28 kB gzipped and keep their previous headroom. Tree-shaking bundlers such as Rolldown add about 6.5 kB. See [bundle measurements](docs/dependency-hygiene.md#bundle-measurements).
 
 ### Fixed
 
