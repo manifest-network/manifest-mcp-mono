@@ -87,13 +87,31 @@ test('sabotage: reports every kind of implicitly exported declaration', () => {
   ]);
 });
 
+test('sabotage: an exported default declaration is not an export statement', () => {
+  // `export default function` is a declaration with modifiers, not an export
+  // declaration or assignment, so TypeScript still exports `priv`.
+  const path = 'dist/default.d.ts';
+  const source = [
+    'export default function run(): void;',
+    'declare const priv: number;',
+    'declare function overloaded(): void;',
+    'declare function overloaded(value: number): void;',
+  ].join('\n');
+  assert.deepEqual(inspect([path], { [path]: source }), [
+    '@example/package: dist/default.d.ts has no export statement, so TypeScript exposes private declarations priv, overloaded',
+  ]);
+});
+
 test('accepts private declarations behind an explicit export statement', () => {
   const path = 'dist/index.d.ts';
   for (const statement of [
     'export { Value };',
+    'export type { Value };',
     'export {};',
     'export = Schema;',
+    'export default Schema;',
     "export * from './other.js';",
+    "export * as ns from './other.js';",
   ]) {
     const source = [
       'declare const Schema: number;',

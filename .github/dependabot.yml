@@ -42,10 +42,11 @@ updates:
       # tsdown 0.23 uses rolldown-plugin-dts 0.28, which drops the export
       # statement from declarations, so TypeScript exports their private
       # declarations (core `/faucet` advertised schemas that fail at ESM link
-      # time). `npm run check:packages` rejects that output. Remove this ignore
-      # once a tsdown 0.23+ build passes it.
+      # time). `npm run check:packages` rejects that output. Only 0.23.x is
+      # ignored so later releases still arrive and the check decides; remove
+      # this entry once a tsdown 0.23 build passes it.
       - dependency-name: "tsdown"
-        versions: [">=0.23.0"]
+        versions: ["0.23.x"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

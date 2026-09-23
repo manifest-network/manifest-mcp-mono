@@ -86,13 +86,17 @@ function declaredNames(statement, file) {
 }
 
 /**
- * A declaration file without an `export {…}`, `export *`, or `export =`
- * statement is an export context: TypeScript treats every top-level
- * declaration in it as exported, including those the source kept private.
- * tsc emits `export {}` to prevent this. rolldown-plugin-dts 0.28 (tsdown
- * 0.23) inlines `export` modifiers and drops that statement, which made core
- * `/faucet` advertise private schemas that fail at ESM link time. Returns the
- * names a file would expose that way; a script file would make them global.
+ * A declaration file with no top-level export declaration or export
+ * assignment (`export {…}`, `export type {…}`, `export *`, `export =`, or
+ * `export default X;`) is an export context: TypeScript treats every
+ * top-level declaration in it as exported, including those the source kept
+ * private. Inline `export` modifiers, `export default function` included, do
+ * not count. tsc emits `export {}` to prevent this. rolldown-plugin-dts 0.28
+ * (tsdown 0.23) inlines `export` modifiers and drops that statement, which
+ * made core `/faucet` advertise private schemas that fail at ESM link time.
+ * Returns the names a file would expose that way; a script file would make
+ * them global. Namespace bodies follow the same rule but are not inspected:
+ * no packed declaration declares a namespace.
  */
 export function implicitDeclarationExports(source, fileName = 'index.d.ts') {
   const file = ts.createSourceFile(
@@ -110,9 +114,13 @@ export function implicitDeclarationExports(source, fileName = 'index.d.ts') {
   ) {
     return [];
   }
-  return file.statements
-    .filter((statement) => !hasExportModifier(statement))
-    .flatMap((statement) => declaredNames(statement, file));
+  return [
+    ...new Set(
+      file.statements
+        .filter((statement) => !hasExportModifier(statement))
+        .flatMap((statement) => declaredNames(statement, file)),
+    ),
+  ];
 }
 
 /** Inspect one npm-pack manifest. Kept pure enough for sabotage tests. */
