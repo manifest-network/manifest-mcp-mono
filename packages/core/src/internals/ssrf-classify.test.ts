@@ -178,6 +178,13 @@ describe('isBlocked — error cases', () => {
     expect(() => isBlocked('not-an-ip')).toThrow();
     expect(() => isBlocked('')).toThrow();
   });
+  it('throws on IPv6 text outside RFC 4291 (ipaddr.js >= 2.5.0)', () => {
+    // ipaddr.js 2.4.0 classified both: the first as loopback, the second as
+    // unicast. The pinned 2.5.0 rejects a group longer than four hex digits
+    // and a `::` that compresses no groups.
+    expect(() => isBlocked('::00001')).toThrow();
+    expect(() => isBlocked('1:2:3:4::5:6:7:8')).toThrow();
+  });
 });
 
 describe('isIpLiteral', () => {
@@ -191,6 +198,10 @@ describe('isIpLiteral', () => {
     expect(isIpLiteral('localhost')).toBe(false);
     expect(isIpLiteral('provider.example.com')).toBe(false);
     expect(isIpLiteral('')).toBe(false);
+  });
+  it('returns false for IPv6 text outside RFC 4291 (ipaddr.js >= 2.5.0)', () => {
+    expect(isIpLiteral('::00001')).toBe(false);
+    expect(isIpLiteral('1:2:3:4::5:6:7:8')).toBe(false);
   });
   it('accepts non-canonical IPv4 encodings (intentional — see doc)', () => {
     // Pins the intentional non-canonical acceptance: ipaddr.js treats the
