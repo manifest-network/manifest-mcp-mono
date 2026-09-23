@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **core:** update `ipaddr.js` to 2.5.0 and keep the repository override aligned with the published dependency.
 
+### Fixed
+
+- **core:** update the optional Node.js transports to `ws` 8.21.3 and `undici` 8.10.2, including Undici's upstream security fixes.
+
 ## [0.23.0] - 2026-09-22
 
 ### Migration notes
