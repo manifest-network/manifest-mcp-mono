@@ -207,13 +207,24 @@ The other budgets stay unchanged: `/reads` measures 26,073 bytes, `/catalog`
 27,770, and `/deploy` 1,089,043. No runtime code, ignored dependencies, or
 tree-shaking settings change for this adjustment.
 
-The 2026-09-23 Zod update from 4.4.3 to 4.6.5 adds 27,911 gzip bytes to
-`/deploy` and 28,189 bytes to the root client. With Node 24.15.0/npm 11.12.1
-and the unchanged size-limit/esbuild toolchain, the dependency-only schema probe
-`import { z } from 'zod'; console.log(z.object({name: z.string(), count: z.number().int()}))`
-grows from 64,952 to 93,122 gzip bytes. The esbuild module graph includes Zod's
-new compiler and expanded schema/JSON-schema implementation; no application
-imports or bundler settings changed. This is an accepted dependency-size increase.
+The 2026-09-23 Zod refresh from 4.4.3 to 4.6.5 changes only the lockfile: the
+published `^4.3.6` range already admits 4.6.5 and stays unchanged. As
+size-limit measures them, the refresh adds 27,911 gzip bytes to `/deploy` and
+28,189 bytes to the root client. Most of that comes from how esbuild,
+size-limit's bundler, handles the `import { z } from 'zod'` form the packages
+use. `z` is a namespace object esbuild cannot tree-shake, so the bundle keeps
+every Zod locale (52 modules in 4.4.3, 63 in 4.6.5) and 4.6's new
+`v4/core/compile.js`. With Node 24.15.0 and esbuild 0.28.2, the dependency-only
+probe `import { z } from 'zod'; console.log(z.object({name: z.string(), count: z.number().int()}))`,
+bundled as minified browser ESM and measured at Node's default `zlib.gzipSync`
+level, grows from 64,952 to 93,122 bytes. Written as `import * as z from 'zod'`,
+the same probe grows from 19,456 to 26,023 bytes. Rolldown 1.2.5 keeps at most
+one locale and no compiler for the SDK entries. At gzip level 9 its `/deploy`
+bundle grows from 1,034,399 to 1,041,216 bytes (+6,817) and its root-client
+bundle from 1,024,076 to 1,030,487 (+6,411). Changing the packages' Zod import
+form could lower both esbuild budgets and is left to a follow-up. No
+application imports or bundler settings change; this is an accepted
+dependency-size increase.
 
 | SDK entry | Zod 4.4.3 (gzip bytes) | Zod 4.6.5 | New budget | Preserved headroom |
 | --- | ---: | ---: | ---: | ---: |

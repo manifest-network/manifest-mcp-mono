@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **core, chain, lease, fred, cosmwasm, agent:** require Zod 4.6.5 or later within v4. SDK deploy/root browser bundles grow by about 28 kB gzipped; size budgets retain their previous headroom.
+- **deps:** refresh the locked Zod from 4.4.3 to 4.6.5 within the existing `^4.3.6` range; published dependency ranges are unchanged. The SDK `/deploy` and root-client size budgets rise by the measured esbuild growth of about 28 kB gzipped and keep their previous headroom. Tree-shaking bundlers such as Rolldown add about 7 kB. See [bundle measurements](docs/dependency-hygiene.md#bundle-measurements).
 
 ### Fixed
 
