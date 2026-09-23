@@ -130,7 +130,7 @@ Where it is active (see [Layer 2 activation](#layer-2-activation) — the MCP se
 
 Provider URLs come from on-chain SKU/provider records, so **where this guard is active** it is what stops a malicious provider whose `apiUrl` is a *hostname* that DNS-resolves to an internal host — the case layer 1's string check cannot see — even over HTTPS. (A literal internal IP is already rejected at layer 1, on every path.) On an entry point where layer 2 is **not** active, that hostname case is not covered: see below.
 
-`ipaddr.js` is force-pinned to `2.4.0` tree-wide (root `package.json` `overrides`): an older copy (e.g. `1.9.1`, pulled transitively by `proxy-addr`) carries a stale RFC table that misclassifies reserved ranges as `'unicast'` and would silently weaken the guard.
+`ipaddr.js` is force-pinned to `2.5.0` tree-wide (root `package.json` `overrides`): an older copy (e.g. `1.9.1`, pulled transitively by `proxy-addr`) carries a stale RFC table that misclassifies reserved ranges as `'unicast'` and would silently weaken the guard.
 
 The guard ships from a **Node-only** subpath — `@manifest-network/manifest-mcp-core/guarded-fetch` (and, mirrored, `@manifest-network/manifest-agent-core/guarded-fetch`) — deliberately kept off the package barrel so browser bundles of `core` don't drag in `undici` / `node:async_hooks`. Import it from that subpath, never the barrel. The *pure* classifier (no `undici`) is exposed separately on the **universal** `@manifest-network/manifest-mcp-core/ssrf` subpath (also off the barrel, to keep that low-level primitive out of the public surface), which is what fred's browser-safe `isUrlSsrfSafe` imports.
 
