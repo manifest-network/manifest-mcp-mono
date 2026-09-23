@@ -138,7 +138,9 @@ export function isBlocked(ipString: string): {
  * Note: `ipaddr.js` also accepts non-canonical IPv4 encodings
  * (hex / octal / decimal / short-form — e.g. `2130706433` for `127.0.0.1`),
  * so this is a "should I classify this host?" predicate, NOT a canonical-IP
- * detector.
+ * detector. It returns `false` for IPv6 text outside RFC 4291 (a group longer
+ * than four hex digits, or `::` compressing no groups), so pass hosts from a
+ * parsed URL rather than raw text when `false` means "fail open".
  */
 export function isIpLiteral(host: string): boolean {
   return ipaddr.isValid(host);
