@@ -207,6 +207,24 @@ The other budgets stay unchanged: `/reads` measures 26,073 bytes, `/catalog`
 27,770, and `/deploy` 1,089,043. No runtime code, ignored dependencies, or
 tree-shaking settings change for this adjustment.
 
+The 2026-09-23 Zod update from 4.4.3 to 4.6.5 adds 27,911 gzip bytes to
+`/deploy` and 28,189 bytes to the root client. With Node 24.15.0/npm 11.12.1
+and the unchanged size-limit/esbuild toolchain, the dependency-only schema probe
+`import { z } from 'zod'; console.log(z.object({name: z.string(), count: z.number().int()}))`
+grows from 64,952 to 93,122 gzip bytes. The esbuild module graph includes Zod's
+new compiler and expanded schema/JSON-schema implementation; no application
+imports or bundler settings changed. This is an accepted dependency-size increase.
+
+| SDK entry | Zod 4.4.3 (gzip bytes) | Zod 4.6.5 | New budget | Preserved headroom |
+| --- | ---: | ---: | ---: | ---: |
+| `/reads` | 26,073 | 26,073 | 27,460 | 1,387 |
+| `/catalog` | 27,770 | 27,770 | 27,790 | 20 |
+| `/deploy` | 1,089,043 | 1,116,954 | 1,117,550 | 596 |
+| root client | 1,078,429 | 1,106,618 | 1,106,953 | 335 |
+
+The two affected budgets rise only by the measured dependency delta. The browser
+module, node-only import, and `/reads` tree-shaking guards remain mandatory.
+
 The namespace-import reduction leaves large crypto and codegen costs that need
 upstream work:
 

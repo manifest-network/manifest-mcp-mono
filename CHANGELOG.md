@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **core, chain, lease, fred, cosmwasm, agent:** require Zod 4.6.5 or later within v4. SDK deploy/root browser bundles grow by about 28 kB gzipped; size budgets retain their previous headroom.
+
 ## [0.23.0] - 2026-09-22
 
 ### Migration notes
