@@ -111,7 +111,7 @@ The downloaded 7.0.2 tarball lacks `lib/typescript.js`; importing that legacy AP
 fails with `ERR_MODULE_NOT_FOUND`. Its root export exposes version information,
 while its new unstable API exports use different entry points. This project uses
 the earlier API directly in `scripts/check-type-tests.test.mjs` and
-`tools/package-integrity.mjs`. Dependency-cruiser 18.2.0's supported TypeScript
+`tools/package-integrity.mjs`. Dependency-cruiser 18.3.1's supported TypeScript
 range is `>=2.0.0 <7.0.0` (`src/meta.cjs`). The type-test harness also invokes
 `typescript/bin/tsc` directly, so an API/native-compiler alias setup must specify
 which compiler that path runs. Replacing the compiler package is therefore a
