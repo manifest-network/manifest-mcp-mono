@@ -58,7 +58,10 @@ bash e2e/scripts/devnet.sh down
 **Submodule pins:** `e2e/docker-compose.yml` builds the devnet Fred from `submodules/fred`
 **source** (there is no `fred:vX.Y` image tag), so the recorded gitlink *is* the e2e Fred version.
 That pin deliberately tracks Fred's unreleased `main`, not a release tag — mono has to be ready for
-a Fred wire change before providers run it (ENG-638). Do not assume a pin is a release. Run
+a Fred wire change before providers run it (ENG-638). Do not assume a pin is a release, or even on
+`main`: an interim pin may be an open Fred PR head. It is currently PR #242's head `f000babe`
+(the ENG-1055 custom-domain fix, on top of PR #240's merge); re-pin to PR #242's `main` merge commit
+once it lands, then re-run `sync:fred-manifest-schema` and the live e2e. Run
 `git submodule update --init --recursive` in a fresh worktree and after pulling a gitlink change: a
 stale on-disk checkout silently makes e2e build a different Fred than the one recorded.
 Fred's deployment-manifest contract is vendored under `packages/fred/schema/` from that same

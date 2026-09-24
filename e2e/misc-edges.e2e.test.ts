@@ -145,18 +145,24 @@ describe('deploy_app with services variant', () => {
       provider_uuid: string;
       provider_url: string;
       state: string;
-    }>('deploy_app', {
-      size: 'docker-micro',
-      // Explicit services form — not the high-level image/port shorthand.
-      // ports is a map keyed by `<port>/<proto>` per the schema.
-      services: {
-        web: {
-          image: 'nginxinc/nginx-unprivileged:alpine',
-          ports: { '8080/tcp': {} },
-          env: { E2E_VARIANT: 'services' },
+    }>(
+      'deploy_app',
+      {
+        size: 'docker-micro',
+        // Explicit services form — not the high-level image/port shorthand.
+        // ports is a map keyed by `<port>/<proto>` per the schema.
+        services: {
+          web: {
+            image: 'nginxinc/nginx-unprivileged:alpine',
+            ports: { '8080/tcp': {} },
+            env: { E2E_VARIANT: 'services' },
+          },
         },
+        // Tool deadline < MCP request timeout < vitest test timeout (ENG-661).
+        timeout_seconds: 90,
       },
-    });
+      { timeoutMs: 120_000 },
+    );
 
     expect(result.lease_uuid).toBeTruthy();
     expect(result.provider_uuid).toBeTruthy();

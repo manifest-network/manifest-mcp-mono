@@ -1,11 +1,15 @@
 # Fred PR #240 compatibility
 
-[ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepares this repository
-against immutable Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234`
-from [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule
-and generated manifest artifacts use that revision. Runtime clients continue
-defaulting to released Fred v0.13; PR240 behavior requires explicit opt-in.
-Revalidate the pin against Fred's final merged revision before rollout.
+[ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepared this repository
+against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
+[PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
+generated manifest artifacts now use `f000babe405f483ff1dec9397eefb28144209432`,
+the head of [PR #242](https://github.com/manifest-network/fred/pull/242). That
+revision builds on PR #240's merge into `main` and fixes
+[ENG-1055](https://linear.app/liftedinit/issue/ENG-1055). Runtime clients
+continue defaulting to released Fred v0.13; PR240 behavior requires explicit
+opt-in. Re-pin to PR #242's merge commit, then revalidate against Fred's final
+merged revision before rollout.
 
 ## Client changes
 
@@ -69,6 +73,15 @@ initializers never reseal partial or existing authority. Follow
 [local E2E setup](e2e-setup.md) for fresh setup or a complete disposable reset;
 existing v0.13 data requires Fred's upstream stopped-upgrade procedure.
 
+At the PR #242 pin, a restart or update can arrive before Fred has delivered an
+earlier completion callback. Fred then answers `503` and keeps the command
+pending, where it previously refused it with `409 invalid state`. The devnet
+maintenance harness retries only that exact `503`, with the same command key.
+Fred deduplicates the command, and its own recovery may already have applied
+it. An update now remains pending until its signed completion callback succeeds.
+A new command in that interval receives `409` "already undergoing a lifecycle
+operation".
+
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.
 
@@ -92,7 +105,9 @@ runs the full E2E suite against both. Live OPTIONS checks verify that the select
 maintenance headers fit each provider's CORS policy; these are not a browser run.
 
 `e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
-actual status/release observations against the new pin. The diagnostics
+the latest live status/release observation. That observation records its Fred
+revision and run, and it stays at `4f00091` until a green live run at the current
+pin replaces it. The diagnostics
 projection records `lease_state` as a required field derived by mono. Conditional
 fields not seen in a healthy run retain their baseline provenance; do not invent
 observations from Go source. Local unit and bootstrap-script tests do not

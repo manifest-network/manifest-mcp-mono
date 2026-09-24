@@ -149,8 +149,9 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
       });
     }
 
-    // 5) Wait for each command. The local harness can recover only the pinned
-    // provider's definitive admission fences after checking status and history.
+    // 5) Wait for each command. The local harness retries only the pinned
+    // provider's exact admission answers: a pending 503 with its original key,
+    // or a definitive 409 fence after checking status and history.
     const readReleases = async () =>
       getLeaseReleases(
         deployed.provider_url,

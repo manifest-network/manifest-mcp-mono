@@ -12,12 +12,22 @@ set -e
 # Keep chain registration shared; only provider/backend configuration differs.
 case "${FRED_COMPATIBILITY:-pr240}" in
     pr240)
-        BOOTSTRAP_VERSION=3
+        # 4: Fred PR #242 image admission. Its first image pin is a journal
+        # downgrade boundary, and bootstrap-3 configs lack the limits below.
+        BOOTSTRAP_VERSION=4
         BACKEND_URL=https://docker-backend:9001
         BACKEND_CA='    tls_ca_file: "/shared/tls/cert.pem"'
         BACKEND_TLS='tls_cert_file: "/shared/tls/cert.pem"
 tls_key_file: "/shared/tls/key.pem"'
         VOLUME_MOUNT='volume_mount_path: "/mnt/fred-xfs"'
+        # MiB. Zero selects Fred's 10 GiB budget and 2 GiB floor; the floor also
+        # applies to the 2 GiB XFS root, which can never have 2 GiB free.
+        IMAGE_ADMISSION='# Image admission: a free-space floor on Docker image storage, the journal
+# directory, its .image-staging directory and volume_data_path. Staging also
+# needs image_max_size_mb per concurrent pull. native-backend-config.mjs adds
+# the host-specific image_data_path for the containerd image store.
+image_max_size_mb: 1024
+image_disk_min_free_mb: 256'
         CALLBACK_URL=https://127.0.0.1:8080
         ;;
     v0.13)
@@ -26,6 +36,7 @@ tls_key_file: "/shared/tls/key.pem"'
         BACKEND_CA=
         BACKEND_TLS=
         VOLUME_MOUNT=
+        IMAGE_ADMISSION=
         CALLBACK_URL=https://providerd:8080
         ;;
     *) echo 'ERROR: unsupported FRED_COMPATIBILITY' >&2; exit 1 ;;
@@ -51,8 +62,9 @@ EXISTING_PROVIDER=$(curl -s "http://chain:1317/liftedinit/sku/v1/provider/addres
 if [ -n "$EXISTING_PROVIDER" ]; then
     echo "Provider already exists with UUID: $EXISTING_PROVIDER"
     if [ -f /shared/providerd.yaml ] && [ -f /shared/docker-backend.yaml ] && [ -f /shared/tls/cert.pem ] && [ -f /shared/tls/key.pem ] && [ -f /shared/converter.env ]; then
-        if [ "$(cat /shared/fred-bootstrap-version 2>/dev/null || true)" != "$BOOTSTRAP_VERSION" ]; then
-            echo "ERROR: Fred bootstrap version is missing or incompatible; this devnet may be old or incompletely initialized. Recreate the disposable devnet and XFS image together, or use Fred's upgrade/recovery procedure." >&2
+        FOUND_BOOTSTRAP_VERSION=$(cat /shared/fred-bootstrap-version 2>/dev/null || true)
+        if [ "$FOUND_BOOTSTRAP_VERSION" != "$BOOTSTRAP_VERSION" ]; then
+            echo "ERROR: Fred bootstrap version '${FOUND_BOOTSTRAP_VERSION:-missing}' does not match required '$BOOTSTRAP_VERSION'; this devnet may be old or incompletely initialized. Recreate the disposable devnet and XFS image together (docs/e2e-setup.md), or use Fred's upgrade/recovery procedure." >&2
             exit 1
         fi
         echo "Configs already exist. Skipping."
@@ -254,6 +266,8 @@ ${VOLUME_MOUNT}
 volume_filesystem: "xfs"
 retain_on_close: true
 container_stop_timeout: "1s"   # governs compose.Down's stop; a sleep-PID-1 container else forces a 30s SIGKILL grace that delays the retain record
+
+${IMAGE_ADMISSION}
 
 # Map on-chain SKU UUIDs to local profile names
 sku_mapping:

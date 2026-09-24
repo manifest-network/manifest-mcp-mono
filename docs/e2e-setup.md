@@ -11,8 +11,13 @@ Unit tests and the read-only annotation suite need no XFS mount.
 
 The PR and nightly workflows use Ubuntu 24.04 and install Docker Engine 29.7.2
 with pinned containerd, Buildx, and Compose versions from Docker's signed package
-repository before preflight. Their installer is
-restricted to GitHub Actions; local setup uses the Docker installation you manage.
+repository before preflight. The installer also sets
+`features.containerd-snapshotter: false` in `/etc/docker/daemon.json`, merged
+with any existing settings, so the runner uses the classic `overlay2` image store
+as production does. Docker 29 otherwise uses the containerd store on a data root
+with no prior `overlay2` state. The installer prints the storage driver and fails
+if it is not classic `overlay2`. It is restricted to GitHub Actions; local setup
+uses the Docker installation you manage (see [Image admission](#image-admission)).
 
 Both workflows test Fred v0.13.0 (`8f0cbd9431b482732d60d81fb59f94a37cd06486`)
 and PR #240 in separate jobs. Each deploys through the SDK, checks actual HTTP
@@ -130,6 +135,58 @@ devnet created before this bootstrap needs Fred's documented upgrade procedure,
 or a complete reset of the disposable devnet using the cleanup below followed
 by a new XFS image. Deleting only Docker volumes or only the XFS image leaves an
 incomplete storage identity and prevents startup.
+PR240 configuration bootstrap `4` adds image admission. A devnet initialized
+with an earlier Fred pin stops at the `init` service with
+`Fred bootstrap version '3' does not match required '4'`. Its generated backend
+configuration lacks the limits below. Once the new backend admits an image, its
+journals cannot be reopened by older Fred binaries. Perform the complete reset.
+
+## Image admission
+
+Fred stages and verifies each new registry image under
+`<callback_db_path>.image-staging` before Docker imports it. Registry requests
+come from the native backend process over HTTPS, using the host's proxy settings
+and CA roots. Docker daemon mirrors and `certs.d` do not apply. The generated
+PR240 configuration limits new images to `image_max_size_mb: 1024`. It keeps an
+`image_disk_min_free_mb: 256` free-space floor instead of Fred's 10 GiB and
+2 GiB defaults, because the 2 GiB XFS image can never have 2 GiB free. Values
+are MiB, and zero selects Fred's default.
+
+The floor applies before every launch to `/mnt/fred-xfs`, Docker's data root (or
+containerd's content root), the backend journal directory and its staging
+directory. Each concurrent image download also needs 1 GiB above the floor on
+the staging filesystem. That is the Docker volume `mcp-e2e-docker-backend-data`,
+usually `/var/lib/docker/volumes/mcp-e2e-docker-backend-data/_data/callbacks.db.image-staging`.
+Refused admissions name the filesystem and the byte counts. The staging directory
+belongs to the backend authority: preserve it across restarts, and do not
+delete it or its `image-import-debit-v1` record by hand.
+`devnet.sh down --volumes` removes it with the backend volume.
+
+Fred supports two Docker image stores:
+
+- **Classic `overlay2`** (Docker 28 and upgraded installations) needs no
+  configuration. Fred accounts the data root that Docker reports.
+- **Containerd `overlayfs`** is the default for fresh Docker 29 installations.
+  `docker info` reports storage driver `overlayfs` with
+  `driver-type io.containerd.snapshotter.v1`. Fred then requires the content
+  root as `image_data_path`. `devnet.sh up` adds `/var/lib/containerd` when
+  Docker uses the system containerd socket (`/run/containerd/containerd.sock`).
+  Otherwise, set `FRED_IMAGE_DATA_PATH` to the containerd root before
+  `devnet.sh up`. Admission on this store also creates and removes stopped
+  inspection containers.
+
+Fred refuses other drivers, including `btrfs`, `zfs`, `vfs` and
+`fuse-overlayfs`, and `devnet.sh up` stops before initializing backend
+authority. Switch Docker to one of the supported stores first.
+
+On first start, the development-mode backend creates the Docker volume
+`fred-image-cache-owner-v1` labeled `fred.image_cache_mode=shared`. It marks
+the whole daemon as a shared, non-collecting image cache and is not devnet
+state. `devnet.sh down --volumes` keeps it, and later devnets reuse it. Do not
+remove it while any Fred backend on this daemon holds active or retained
+authority. If backend startup reports `docker image store has exclusive
+ownership`, a production-mode Fred owns this daemon; use a separate Docker
+daemon for the E2E devnet.
 
 ## Cleanup
 
@@ -137,6 +194,8 @@ Stop the stack before unmounting. This removes test chain, backend, and provider
 Remove the image only if it is the disposable image you created above.
 Complete the whole cleanup before starting a fresh devnet; removing named volumes
 alone does not remove the backend identity and tenant data on the XFS image.
+The backend volume also holds the image staging directory. The daemon-wide
+`fred-image-cache-owner-v1` marker and images Docker already imported remain.
 
 ```bash
 bash e2e/scripts/devnet.sh down --volumes

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **core:** update the optional Node.js transports to `ws` 8.21.3 and `undici` 8.10.2, including Undici's upstream security fixes.
+- **e2e:** pin the devnet Fred to Fred PR #242's head `f000babe`, which builds on Fred PR #240's merge and fixes custom-domain leases that never became ready when ingress is disabled. Re-pin to the merge commit after Fred PR #242 lands. The PR240-leg devnet now sets Fred's new image-admission limits (`image_max_size_mb` 1024, `image_disk_min_free_mb` 256, since its 2 GiB XFS root can never meet the 2 GiB default floor), derives `image_data_path` for Docker's containerd image store, and requires a complete local reset (bootstrap version 4). CI pins Docker's classic `overlay2` image store, as production uses. The vendored manifest schema and limits are unchanged, and so are the status, release and provision fields that mono reads. The PR240 maintenance harness now retries this Fred's pending `503` with the same command key. Fred returns that `503`, where it previously returned `409 invalid state`, when a command overlaps an undelivered completion; the command stays pending in Fred. Custom-domain `deploy_app` e2e calls now use explicit tool and MCP timeouts, so a readiness failure is reported with Fred's diagnostic. (ENG-1055)
 
 ## [0.23.0] - 2026-09-22
 
