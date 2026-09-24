@@ -14,9 +14,28 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parse, stringify } from 'yaml';
-import { nativeBackendConfig } from '../e2e/scripts/native-backend-config.mjs';
+import {
+  imageDataPath,
+  nativeBackendConfig,
+} from '../e2e/scripts/native-backend-config.mjs';
 
 const root = new URL('../', import.meta.url);
+// `docker info` shapes for each store Fred's image_capacity.go classifies.
+const classicDockerInfo = {
+  Driver: 'overlay2',
+  DriverStatus: [
+    ['Backing Filesystem', 'extfs'],
+    ['Supports d_type', 'true'],
+  ],
+  DockerRootDir: '/var/lib/docker',
+  Containerd: { Address: '/run/containerd/containerd.sock' },
+};
+const containerdDockerInfo = {
+  Driver: 'overlayfs',
+  DriverStatus: [['driver-type', 'io.containerd.snapshotter.v1']],
+  DockerRootDir: '/var/lib/docker',
+  Containerd: { Address: '/run/containerd/containerd.sock' },
+};
 const authorityMembers = [
   'data/callbacks.db',
   'data/releases.db',
@@ -267,6 +286,80 @@ test('generated Fred configuration supplies verified backend TLS and exact persi
   }
   assert.match(script, /subjectAltName=[^\n"]*DNS:docker-backend/);
   assert.equal(provider.callback_base_url, 'https://127.0.0.1:8080');
+  // Fred treats 0 as its 10 GiB budget and 2 GiB floor; both are set explicitly.
+  assert.equal(backend.image_max_size_mb, 1024);
+  assert.equal(backend.image_disk_min_free_mb, 256);
+  // Host-specific: only the native renderer may add the containerd root.
+  assert.equal(backend.image_data_path, undefined);
+});
+
+test('pr240 image admission floor fits the disposable 2 GiB XFS root', () => {
+  const { backend } = generatedFredConfig();
+  // mkfs.xfs leaves 507868 free 4 KiB blocks on the 2 GiB image before XFS
+  // withholds its 32 MiB reserve pool. Fred checks the floor on
+  // volume_data_path before every launch, so it must survive two full quotas
+  // of every stateful SKU (the suite retains and restores docker-small).
+  const xfsAvailableMiB = Math.floor((507868 * 4096) / 2 ** 20) - 32;
+  const statefulMiB = Object.values(backend.sku_profiles).reduce(
+    (total, profile) => total + profile.disk_mb,
+    0,
+  );
+  assert(statefulMiB > 0);
+  assert(
+    backend.image_disk_min_free_mb + 2 * statefulMiB <= xfsAvailableMiB,
+    `floor ${backend.image_disk_min_free_mb} MiB + ${2 * statefulMiB} MiB exceeds ${xfsAvailableMiB} MiB`,
+  );
+});
+
+test('image store classification matches Fred and derives the containerd root', () => {
+  assert.equal(imageDataPath(classicDockerInfo), undefined);
+  // Fred only reads two-element DriverStatus pairs, so a longer row naming
+  // containerd still describes classic overlay2.
+  assert.equal(
+    imageDataPath({
+      Driver: 'overlay2',
+      DriverStatus: [['driver-type', 'io.containerd.snapshotter.v1', 'extra']],
+    }),
+    undefined,
+  );
+  assert.equal(imageDataPath(containerdDockerInfo), '/var/lib/containerd');
+  assert.equal(
+    imageDataPath({
+      ...containerdDockerInfo,
+      Containerd: { Address: '/var/run/containerd/containerd.sock' },
+    }),
+    '/var/lib/containerd',
+  );
+  assert.equal(
+    imageDataPath(containerdDockerInfo, '/srv/containerd'),
+    '/srv/containerd',
+  );
+  // A dockerd-managed or unreported containerd has no default root to assume.
+  for (const Containerd of [
+    { Address: '/var/run/docker/containerd/containerd.sock' },
+    undefined,
+  ]) {
+    assert.throws(
+      () => imageDataPath({ ...containerdDockerInfo, Containerd }),
+      /FRED_IMAGE_DATA_PATH/,
+    );
+  }
+  assert.throws(
+    () => imageDataPath(containerdDockerInfo, 'relative/containerd'),
+    /absolute/,
+  );
+  // requireBoundedImageStore: overlay2 only without containerd, overlayfs only with it.
+  for (const info of [
+    { Driver: 'overlay2', DriverStatus: containerdDockerInfo.DriverStatus },
+    { Driver: 'overlayfs', DriverStatus: classicDockerInfo.DriverStatus },
+    { Driver: 'stargz-snapshotter', DriverStatus: [] },
+    { Driver: 'btrfs', DriverStatus: [] },
+    { Driver: 'vfs', DriverStatus: [] },
+    { Driver: 'fuse-overlayfs', DriverStatus: [] },
+  ]) {
+    assert.throws(() => imageDataPath(info), /overlay2 or the containerd/);
+  }
+  assert.throws(() => imageDataPath(null), /Docker daemon information/);
 });
 
 test('legacy configuration keeps its supported HTTP backend and container callback topology', () => {
@@ -278,6 +371,9 @@ test('legacy configuration keeps its supported HTTP backend and container callba
   assert.equal(backend.tls_cert_file, undefined);
   assert.equal(backend.volume_mount_path, undefined);
   assert.equal(backend.volume_data_path, '/mnt/fred-xfs');
+  // v0.13.0 predates image admission; keep its configuration semantically unchanged.
+  for (const key of Object.keys(backend))
+    assert(!key.startsWith('image_'), key);
   const modern = parse(
     readFileSync(new URL('e2e/docker-compose.yml', root), 'utf8'),
   );
@@ -305,13 +401,15 @@ test('native configuration uses the exact persistent host paths without rewritin
     ...backend,
     callback_secret: 'literal /data/ and /shared/ text',
   };
-  const actual = parse(
-    nativeBackendConfig(stringify(source), {
-      backendData: '/host/backend authority',
-      sharedData: '/host/shared authority',
-    }),
-  );
-  assert.deepEqual(actual, {
+  const render = (dockerInfo) =>
+    parse(
+      nativeBackendConfig(stringify(source), {
+        backendData: '/host/backend authority',
+        sharedData: '/host/shared authority',
+        dockerInfo,
+      }),
+    );
+  const expected = {
     ...source,
     tls_cert_file: '/host/shared authority/tls/cert.pem',
     tls_key_file: '/host/shared authority/tls/key.pem',
@@ -319,14 +417,32 @@ test('native configuration uses the exact persistent host paths without rewritin
     diagnostics_db_path: '/host/backend authority/diagnostics.db',
     releases_db_path: '/host/backend authority/releases.db',
     retention_db_path: '/host/backend authority/retention.db',
+  };
+  assert.deepEqual(render(classicDockerInfo), expected);
+  assert.deepEqual(render(containerdDockerInfo), {
+    ...expected,
+    image_data_path: '/var/lib/containerd',
   });
+  assert.throws(
+    () =>
+      nativeBackendConfig(
+        stringify({ ...source, image_data_path: '/var/lib/containerd' }),
+        {
+          backendData: '/host/backend',
+          sharedData: '/host/shared',
+          dockerInfo: classicDockerInfo,
+        },
+      ),
+    /host-specific/,
+  );
 });
 
-test('native configuration CLI keeps generated credentials private', (t) => {
-  const f = fixture(t);
+function renderNativeConfig(f, dockerInfo, imageDataPathOverride = '') {
   const source = join(f.directory, 'source.yaml');
+  const info = join(f.directory, 'docker-info.json');
   const destination = join(f.directory, 'native.yaml');
   writeFileSync(source, stringify(generatedFredConfig().backend));
+  writeFileSync(info, JSON.stringify(dockerInfo));
   writeFileSync(destination, 'previous configuration', { mode: 0o644 });
   const result = spawnSync(
     process.execPath,
@@ -336,14 +452,49 @@ test('native configuration CLI keeps generated credentials private', (t) => {
       destination,
       join(f.directory, 'data'),
       join(f.directory, 'shared'),
+      info,
     ],
-    { encoding: 'utf8' },
+    {
+      encoding: 'utf8',
+      env: { ...process.env, FRED_IMAGE_DATA_PATH: imageDataPathOverride },
+    },
   );
+  return { result, destination };
+}
+
+test('native configuration CLI keeps generated credentials private', (t) => {
+  const f = fixture(t);
+  const { result, destination } = renderNativeConfig(f, classicDockerInfo);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(statSync(destination).mode & 0o777, 0o600);
+  const rendered = parse(readFileSync(destination, 'utf8'));
   assert.equal(
-    parse(readFileSync(destination, 'utf8')).callback_db_path,
+    rendered.callback_db_path,
     join(f.directory, 'data/callbacks.db'),
+  );
+  assert.equal(rendered.image_data_path, undefined);
+});
+
+test('native configuration CLI adds only an existing containerd image root', (t) => {
+  const f = fixture(t);
+  const content = join(f.directory, 'containerd');
+  mkdirSync(content);
+  const accepted = renderNativeConfig(f, containerdDockerInfo, content);
+  assert.equal(accepted.result.status, 0, accepted.result.stderr);
+  assert.equal(
+    parse(readFileSync(accepted.destination, 'utf8')).image_data_path,
+    content,
+  );
+  const missing = renderNativeConfig(
+    f,
+    containerdDockerInfo,
+    join(f.directory, 'absent'),
+  );
+  assert.notEqual(missing.result.status, 0);
+  assert.match(missing.result.stderr, /not a directory/);
+  assert.equal(
+    readFileSync(missing.destination, 'utf8'),
+    'previous configuration',
   );
 });
 
@@ -353,18 +504,24 @@ test('native configuration rejects authority paths outside the expected roots', 
     '/other/callbacks.db',
     '/data/../callbacks.db',
   ]) {
-    assert.throws(() =>
-      nativeBackendConfig(stringify({ ...backend, callback_db_path }), {
-        backendData: '/host/backend',
-        sharedData: '/host/shared',
-      }),
+    assert.throws(
+      () =>
+        nativeBackendConfig(stringify({ ...backend, callback_db_path }), {
+          backendData: '/host/backend',
+          sharedData: '/host/shared',
+          dockerInfo: classicDockerInfo,
+        }),
+      /Expected callback_db_path/,
     );
   }
-  assert.throws(() =>
-    nativeBackendConfig(stringify(backend), {
-      backendData: 'relative/backend',
-      sharedData: '/host/shared',
-    }),
+  assert.throws(
+    () =>
+      nativeBackendConfig(stringify(backend), {
+        backendData: 'relative/backend',
+        sharedData: '/host/shared',
+        dockerInfo: classicDockerInfo,
+      }),
+    /absolute/,
   );
 });
 
@@ -499,7 +656,15 @@ const env = process.env;
 fs.appendFileSync(env.FRED_TEST_LOG, JSON.stringify({ command, args,
   backendData: env.FRED_BACKEND_DATA_DIR, volumeData: env.FRED_VOLUME_DATA_PATH,
   backendConfig: env.FRED_BACKEND_CONFIG }) + '\\n');
-if (command === 'id') { console.log('0'); process.exit(0); }
+if (command === 'id') { console.log(env.FRED_TEST_UID ?? '0'); process.exit(0); }
+if (command === 'sudo') {
+  // Like sudo's env_reset: only PATH and this harness's variables survive.
+  const kept = Object.fromEntries(Object.entries(env).filter(
+    ([name]) => name === 'PATH' || name.startsWith('FRED_TEST_')));
+  const [target, ...rest] = args[0] === '--' ? args.slice(1) : args;
+  const child = require('node:child_process').spawnSync(target, rest, { stdio: 'inherit', env: kept });
+  process.exit(child.status ?? 1);
+}
 if (command === 'systemctl' && args.includes('is-active')) process.exit(3);
 if (command === 'systemctl' && args[0] === 'show' && env.FRED_TEST_UNIT_MISSING) {
   console.log('not-found'); process.exit(1);
@@ -513,6 +678,7 @@ if (command === 'docker') {
     console.log(args.includes('mcp-e2e-shared-data') ? env.FRED_TEST_SHARED : env.FRED_TEST_DATA);
   }
   if (args[0] === 'volume' && args[1] === 'create') console.log(args.at(-1));
+  if (args[0] === 'info') console.log(env.FRED_TEST_DOCKER_INFO);
 }
 if (command === 'sh' && args.at(-1).endsWith('/init_backend.sh')) {
   if (env.FRED_TEST_FAIL_STEP === 'backend-init') process.exit(17);
@@ -530,6 +696,7 @@ if (command === 'curl' && env.FRED_TEST_FAIL_STEP === 'health') process.exit(22)
     'id',
     'sleep',
     'sh',
+    'sudo',
     'xfs_quota',
   ]) {
     symlinkSync(shim, join(commands, command));
@@ -554,6 +721,8 @@ if (command === 'curl' && env.FRED_TEST_FAIL_STEP === 'health') process.exit(22)
             FRED_TEST_SHARED: shared,
             FRED_TEST_DATA: join(f.directory, 'data'),
             FRED_TEST_LOG: join(f.directory, 'calls.jsonl'),
+            FRED_TEST_DOCKER_INFO: JSON.stringify(classicDockerInfo),
+            FRED_IMAGE_DATA_PATH: '',
             ...extra,
           },
         },
@@ -600,9 +769,54 @@ test('native launcher admits storage and verifies health before exposing provide
     config.callback_db_path,
     join(calls[initialization].backendData, 'callbacks.db'),
   );
+  // Classic overlay2: Fred accounts Docker's reported data root by itself.
+  assert.equal(config.image_data_path, undefined);
+  assert.equal(config.image_disk_min_free_mb, 256);
   assert.ok(calls[healthy].args.includes('--cacert'));
   assert.ok(calls[healthy].args.includes(join(f.shared, 'tls/cert.pem')));
   assert.ok(calls[healthy].args.includes('https://127.0.0.1:9001/health'));
+});
+
+test('native launcher configures the containerd image root reported by Docker', (t) => {
+  const f = nativeLauncherFixture(t);
+  const content = join(f.directory, 'containerd');
+  mkdirSync(content);
+  // A non-root developer: root_exec goes through sudo, which resets the
+  // environment, so the override must be passed explicitly.
+  const result = f.run('up', {
+    FRED_TEST_DOCKER_INFO: JSON.stringify(containerdDockerInfo),
+    FRED_IMAGE_DATA_PATH: content,
+    FRED_TEST_UID: '1000',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(f.calls().some(({ command }) => command === 'sudo'));
+  const initialization = f
+    .calls()
+    .find(
+      ({ command, args }) =>
+        command === 'sh' && args.at(-1).endsWith('/init_backend.sh'),
+    );
+  assert.equal(
+    parse(readFileSync(initialization.backendConfig, 'utf8')).image_data_path,
+    content,
+  );
+});
+
+test('native launcher refuses an image store Fred cannot bound before creating authority', (t) => {
+  const f = nativeLauncherFixture(t);
+  const result = f.run('up', {
+    FRED_TEST_DOCKER_INFO: JSON.stringify({
+      Driver: 'btrfs',
+      DriverStatus: [],
+    }),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /overlay2 or the containerd overlayfs/);
+  assert.ok(
+    !f
+      .calls()
+      .some(({ command }) => command === 'sh' || command === 'systemd-run'),
+  );
 });
 
 for (const step of ['backend-init', 'health']) {

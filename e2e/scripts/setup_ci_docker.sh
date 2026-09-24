@@ -33,7 +33,7 @@ if (( ${#conflicts[@]} )); then
 fi
 
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl
+sudo apt-get install -y ca-certificates curl jq
 sudo install -m 0755 -d /etc/apt/keyrings
 curl --fail --silent --show-error --location --retry 5 \
     https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc >/dev/null
@@ -49,6 +49,27 @@ Architectures: $(dpkg --print-architecture)
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
 sudo apt-get update
+# Fred's bounded image admission supports classic overlay2 without an
+# image_data_path, matching production. Docker 29 selects the containerd store
+# for a data root without prior graphdriver state, so the result would depend
+# on how the runner image initialized Docker. Pin it before the upgraded daemon
+# first starts, keeping every setting the runner image already configured.
+sudo install -m 0755 -d /etc/docker
+daemon_config='{}'
+if sudo test -f /etc/docker/daemon.json; then
+    existing_config=$(sudo cat /etc/docker/daemon.json)
+    # An empty or whitespace-only file carries no settings.
+    if [[ -n "${existing_config//[[:space:]]/}" ]]; then
+        daemon_config=$existing_config
+    fi
+fi
+merged_config=$(jq -e '.features["containerd-snapshotter"] = false' <<<"$daemon_config")
+if [[ -z "$merged_config" ]]; then
+    echo "ERROR: could not merge the Docker image-store pin into daemon.json." >&2
+    exit 1
+fi
+printf '%s\n' "$merged_config" | sudo tee /etc/docker/daemon.json.new >/dev/null
+sudo mv /etc/docker/daemon.json.new /etc/docker/daemon.json
 sudo apt-get install -y --allow-downgrades \
     "docker-ce=$docker_version" "docker-ce-cli=$docker_version" \
     "containerd.io=$containerd_version" \
@@ -57,3 +78,13 @@ sudo systemctl restart docker
 docker context use default
 docker version
 docker compose version
+# Fred classifies the image store from these fields (daemonUsesContainerd).
+docker_driver=$(docker info --format '{{.Driver}}')
+docker_driver_status=$(docker info --format '{{json .DriverStatus}}')
+docker_root=$(docker info --format '{{.DockerRootDir}}')
+echo "Docker image store: $docker_driver $docker_driver_status at $docker_root"
+df -h "$docker_root"
+if [[ "$docker_driver" != overlay2 || "$docker_driver_status" == *containerd* ]]; then
+    echo "ERROR: Docker did not start with the pinned classic overlay2 image store." >&2
+    exit 1
+fi

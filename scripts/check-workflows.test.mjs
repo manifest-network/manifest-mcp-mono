@@ -390,6 +390,27 @@ test('CI Docker installer pins signed Ubuntu packages and refuses non-CI executi
   }
   assert.match(source, /Signed-By: \/etc\/apt\/keyrings\/docker\.asc/);
   assert.match(source, /docker context use default/);
+  // Fred's image admission: pin classic overlay2 before the upgraded daemon's
+  // first start, then verify the store Docker actually selected.
+  const pin = source.indexOf(
+    `jq -e '.features["containerd-snapshotter"] = false'`,
+  );
+  const move = source.indexOf(
+    'sudo mv /etc/docker/daemon.json.new /etc/docker/daemon.json',
+  );
+  const upgrade = source.indexOf('"docker-ce=$docker_version"');
+  const restart = source.indexOf('sudo systemctl restart docker');
+  const verify = source.indexOf(`"$docker_driver" != overlay2`);
+  assert(pin >= 0 && pin < move, 'image store pin merged before it is written');
+  assert(
+    move < upgrade,
+    'daemon.json written before the upgraded daemon starts',
+  );
+  assert(
+    restart >= 0 && restart < verify,
+    'image store verified after the restart',
+  );
+  assert.match(source, /"\$docker_driver_status" == \*containerd\*/);
   const syntax = spawnSync('bash', ['-n', script], { encoding: 'utf8' });
   assert.equal(syntax.status, 0, syntax.stderr);
   const refused = spawnSync('bash', [script], {

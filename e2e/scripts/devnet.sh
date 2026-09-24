@@ -106,10 +106,15 @@ start_devnet() {
     backend_data=$(docker volume inspect --format '{{ .Mountpoint }}' "$backend_volume")
     shared_data=$(docker volume inspect --format '{{ .Mountpoint }}' "$shared_volume")
     [ -n "$backend_data" ] && [ -n "$shared_data" ] || fail 'Docker did not return the persistent volume locations'
+    # Fred classifies the image store from these daemon fields at every
+    # admission; the containerd store also needs its content root configured.
+    docker info --format '{{json .}}' >"$native_dir/docker-info.json" ||
+        fail 'Cannot inspect the Docker image store'
     node_bin=$(command -v node)
-    root_exec "$node_bin" "$repo_root/e2e/scripts/native-backend-config.mjs" \
+    root_exec env FRED_IMAGE_DATA_PATH="${FRED_IMAGE_DATA_PATH:-}" \
+        "$node_bin" "$repo_root/e2e/scripts/native-backend-config.mjs" \
         "$shared_data/docker-backend.yaml" "$native_dir/docker-backend.yaml" \
-        "$backend_data" "$shared_data"
+        "$backend_data" "$shared_data" "$native_dir/docker-info.json"
     root_exec env \
         FRED_BACKEND_BIN="$native_dir/docker-backend" \
         FRED_BACKEND_CONFIG="$native_dir/docker-backend.yaml" \
@@ -152,9 +157,12 @@ stop_devnet() {
     if [ "$remove_volumes" = --volumes ]; then
         "${compose[@]}" down --volumes --remove-orphans
         # This host-owned journal volume is intentionally not mounted by Compose.
+        # It also holds <callback_db_path>.image-staging and its import debit.
         if docker volume inspect "$backend_volume" >/dev/null 2>&1; then
             docker volume rm "$backend_volume"
         fi
+        # Fred's daemon-wide fred-image-cache-owner-v1 marker is not devnet
+        # state; other backends on this daemon may depend on it. Keep it.
         echo 'Named volumes removed. Recreate the matching disposable XFS storage before the next up.'
     else
         "${compose[@]}" down --remove-orphans
