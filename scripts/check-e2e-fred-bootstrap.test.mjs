@@ -313,6 +313,15 @@ test('pr240 image admission floor fits the disposable 2 GiB XFS root', () => {
 
 test('image store classification matches Fred and derives the containerd root', () => {
   assert.equal(imageDataPath(classicDockerInfo), undefined);
+  // Fred only reads two-element DriverStatus pairs, so a longer row naming
+  // containerd still describes classic overlay2.
+  assert.equal(
+    imageDataPath({
+      Driver: 'overlay2',
+      DriverStatus: [['driver-type', 'io.containerd.snapshotter.v1', 'extra']],
+    }),
+    undefined,
+  );
   assert.equal(imageDataPath(containerdDockerInfo), '/var/lib/containerd');
   assert.equal(
     imageDataPath({
@@ -362,7 +371,7 @@ test('legacy configuration keeps its supported HTTP backend and container callba
   assert.equal(backend.tls_cert_file, undefined);
   assert.equal(backend.volume_mount_path, undefined);
   assert.equal(backend.volume_data_path, '/mnt/fred-xfs');
-  // v0.13.0 predates image admission; keep its configuration byte-compatible.
+  // v0.13.0 predates image admission; keep its configuration semantically unchanged.
   for (const key of Object.keys(backend))
     assert(!key.startsWith('image_'), key);
   const modern = parse(

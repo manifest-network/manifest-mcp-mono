@@ -71,10 +71,13 @@ function legacyAdmissionRefusal(error: unknown, operation: Operation): boolean {
  * - 409 invalid state: a durable terminal refusal. Ready can precede delivery of
  *   the previous completion callback (shared/maintenance_intent.go), so after
  *   proving nothing changed, a new command needs a new key.
- * - 503: dispatch was ambiguous and the command stays pending. This includes
- *   the backend's lifecycle_pending answer to contention with other admitted
- *   lifecycle work. Recovery may still execute the command, so only the same
- *   key may follow; release history can change while it runs.
+ * - 503 'service temporarily unavailable': Fred's generic unavailable answer.
+ *   For this key it is either pending work (the backend's lifecycle_pending
+ *   answer to not-yet-journaled lifecycle work, or an ambiguous dispatch) or a
+ *   replayed terminal/pre-admission refusal. Recovery may still execute a
+ *   pending command, so only the same key may follow; a same-key replay is safe
+ *   in every case, and the bounded budget rethrows the final 503 unchanged.
+ *   Release history can change while it runs.
  */
 export async function submitDevnetMaintenance<T>(options: {
   operation: Operation;

@@ -73,13 +73,17 @@ initializers never reseal partial or existing authority. Follow
 [local E2E setup](e2e-setup.md) for fresh setup or a complete disposable reset;
 existing v0.13 data requires Fred's upstream stopped-upgrade procedure.
 
-At the PR #242 pin, a restart or update can arrive before Fred has delivered an
-earlier completion callback. Fred then answers `503` and keeps the command
-pending, where it previously refused it with `409 invalid state`. The devnet
-maintenance harness retries only that exact `503`, with the same command key.
-Fred deduplicates the command, and its own recovery may already have applied
-it. An update now remains pending until its signed completion callback succeeds.
-A new command in that interval receives `409` "already undergoing a lifecycle
+At the PR #242 pin, a restart or update can overlap admitted lifecycle work
+whose outcome is not yet journaled: a maintenance just after Ready, a close, or
+a pending provision or restore. Fred then answers `503` and keeps the command
+pending, where it previously refused it with `409 invalid state`. A command that
+overlaps a journaled but undelivered completion still receives
+`409 invalid state`. Fred's tenant `503` body is generic, so the devnet
+maintenance harness retries only Fred's own `503` body for the same command
+key, within a bounded budget, and rethrows the final answer unchanged. Fred
+deduplicates the command, and its own recovery may already have applied it. An
+update now remains pending until its signed completion callback succeeds. A new
+command in that interval receives `409` "already undergoing a lifecycle
 operation".
 
 Run builds and the unit suite sequentially: architecture tests temporarily create

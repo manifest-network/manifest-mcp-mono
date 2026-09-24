@@ -56,11 +56,19 @@ sudo apt-get update
 # first starts, keeping every setting the runner image already configured.
 sudo install -m 0755 -d /etc/docker
 daemon_config='{}'
-if sudo test -s /etc/docker/daemon.json; then
-    daemon_config=$(sudo cat /etc/docker/daemon.json)
+if sudo test -f /etc/docker/daemon.json; then
+    existing_config=$(sudo cat /etc/docker/daemon.json)
+    # An empty or whitespace-only file carries no settings.
+    if [[ -n "${existing_config//[[:space:]]/}" ]]; then
+        daemon_config=$existing_config
+    fi
 fi
-jq '.features["containerd-snapshotter"] = false' <<<"$daemon_config" |
-    sudo tee /etc/docker/daemon.json.new >/dev/null
+merged_config=$(jq -e '.features["containerd-snapshotter"] = false' <<<"$daemon_config")
+if [[ -z "$merged_config" ]]; then
+    echo "ERROR: could not merge the Docker image-store pin into daemon.json." >&2
+    exit 1
+fi
+printf '%s\n' "$merged_config" | sudo tee /etc/docker/daemon.json.new >/dev/null
 sudo mv /etc/docker/daemon.json.new /etc/docker/daemon.json
 sudo apt-get install -y --allow-downgrades \
     "docker-ce=$docker_version" "docker-ce-cli=$docker_version" \

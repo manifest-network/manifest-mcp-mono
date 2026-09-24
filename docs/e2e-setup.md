@@ -145,16 +145,18 @@ journals cannot be reopened by older Fred binaries. Perform the complete reset.
 
 Fred stages and verifies each new registry image under
 `<callback_db_path>.image-staging` before Docker imports it. Registry requests
-come from the native backend process over HTTPS, using the host's proxy settings
-and CA roots. Docker daemon mirrors and `certs.d` do not apply. The generated
+come from the native backend process over HTTPS, using the host CA roots and the
+proxy environment of the backend's systemd unit (the systemd manager's
+environment; `devnet.sh` does not forward a shell's `HTTPS_PROXY`/`NO_PROXY`).
+Docker daemon mirrors and `certs.d` do not apply. The generated
 PR240 configuration limits new images to `image_max_size_mb: 1024`. It keeps an
 `image_disk_min_free_mb: 256` free-space floor instead of Fred's 10 GiB and
 2 GiB defaults, because the 2 GiB XFS image can never have 2 GiB free. Values
 are MiB, and zero selects Fred's default.
 
-The floor applies before every launch to `/mnt/fred-xfs`, Docker's data root (or
-containerd's content root), the backend journal directory and its staging
-directory. Each concurrent image download also needs 1 GiB above the floor on
+The floor applies before every launch to `/mnt/fred-xfs`, Docker's data root
+(and, on the containerd image store, its content root), the backend journal
+directory and its staging directory. Each concurrent image download also needs 1 GiB above the floor on
 the staging filesystem. That is the Docker volume `mcp-e2e-docker-backend-data`,
 usually `/var/lib/docker/volumes/mcp-e2e-docker-backend-data/_data/callbacks.db.image-staging`.
 Refused admissions name the filesystem and the byte counts. The staging directory
