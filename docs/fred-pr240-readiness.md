@@ -3,7 +3,7 @@
 [ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepared this repository
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
-generated manifest artifacts now use `f000babe405f483ff1dec9397eefb28144209432`,
+generated manifest artifacts now use `23e5628ab7e64c3301b70455c06d06a2028fd1ce`,
 the head of [PR #242](https://github.com/manifest-network/fred/pull/242). That
 revision builds on PR #240's merge into `main` and fixes
 [ENG-1055](https://linear.app/liftedinit/issue/ENG-1055). Runtime clients

@@ -59,7 +59,7 @@ bash e2e/scripts/devnet.sh down
 **source** (there is no `fred:vX.Y` image tag), so the recorded gitlink *is* the e2e Fred version.
 That pin deliberately tracks Fred's unreleased `main`, not a release tag — mono has to be ready for
 a Fred wire change before providers run it (ENG-638). Do not assume a pin is a release, or even on
-`main`: an interim pin may be an open Fred PR head. It is currently PR #242's head `f000babe`
+`main`: an interim pin may be an open Fred PR head. It is currently PR #242's head `23e5628`
 (the ENG-1055 custom-domain fix, on top of PR #240's merge); re-pin to PR #242's `main` merge commit
 once it lands, then re-run `sync:fred-manifest-schema` and the live e2e. Run
 `git submodule update --init --recursive` in a fresh worktree and after pulling a gitlink change: a
