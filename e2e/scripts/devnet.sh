@@ -122,8 +122,9 @@ start_devnet() {
         FRED_VOLUME_DATA_PATH=/mnt/fred-xfs \
         sh "$repo_root/e2e/scripts/init_backend.sh"
 
-    # Fred needs at most 30s HTTP shutdown + 90s worker drain. Let it finish its
-    # typed shutdown rather than systemd's default 90s killing it mid-recovery.
+    # Fred shares one 75s budget across HTTP shutdown and worker drain
+    # (cmd/docker-backend/shutdown.go). Let it finish its typed shutdown rather
+    # than a stop timeout killing it mid-recovery; 180s leaves margin.
     root_exec systemd-run --unit "$backend_unit" --collect \
         --property Type=exec --property TimeoutStopSec=180s \
         --property "WorkingDirectory=$native_dir" \

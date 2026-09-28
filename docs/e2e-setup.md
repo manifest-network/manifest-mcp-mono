@@ -140,6 +140,10 @@ with an earlier Fred pin stops at the `init` service with
 `Fred bootstrap version '3' does not match required '4'`. Its generated backend
 configuration lacks the limits below. Once the new backend admits an image, its
 journals cannot be reopened by older Fred binaries. Perform the complete reset.
+A bootstrap-4 devnet created at an earlier PR #242 revision and stopped with an
+image import in flight can also refuse to start after a later re-pin ("legacy
+image import allocation lacks complete metadata accounting"); reset it the same
+way.
 
 ## Image admission
 

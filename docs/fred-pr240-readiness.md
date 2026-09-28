@@ -74,8 +74,9 @@ initializers never reseal partial or existing authority. Follow
 existing v0.13 data requires Fred's upstream stopped-upgrade procedure.
 
 At the PR #242 pin, a restart or update can overlap admitted lifecycle work
-whose outcome is not yet journaled: a maintenance just after Ready, a close, or
-a pending provision or restore. Fred then answers `503` and keeps the command
+whose outcome is not yet journaled: a maintenance just after Ready, a not yet
+journaled close, or a pending provision or restore. Fred then answers `503` and
+keeps the command
 pending, where it previously refused it with `409 invalid state`. A command that
 overlaps a journaled but undelivered completion still receives
 `409 invalid state`. Fred's tenant `503` body is generic, so the devnet
