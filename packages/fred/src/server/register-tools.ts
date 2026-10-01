@@ -27,12 +27,13 @@ import type {
 import { z } from 'zod';
 import type { FredCompatibilityConfig } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
-import { guidanceFor } from '../failure-guidance.js';
+import { FRED_REASON_GUIDANCE, guidanceFor } from '../failure-guidance.js';
 import { sanitizeFailureFields } from '../failure-reason.js';
 import type { AuthTokenService } from '../http/auth-token-service.js';
 import type { FredLeaseStatus } from '../http/fred.js';
 import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from '../http/fred.js';
 import type { ProviderAuthPort } from '../http/provider-auth.js';
+import { isBackendStorageLost } from '../http/provider-error-reason.js';
 import { MAINTENANCE_IDEMPOTENCY_KEY_RE } from '../maintenance.js';
 import { appStatus } from '../tools/appStatus.js';
 import { browseCatalog } from '../tools/browseCatalog.js';
@@ -520,7 +521,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'check_deployment_readiness',
     {
       description:
-        "Pre-flight check for deploy_app: surfaces the caller's wallet balances, credit account, requested SKU availability, and a human-readable list of missing steps. Use this before deploy_app to decide whether to fund credits, switch SKU, or top up the wallet. Note: the chain does not expose provider allowed_registries, so a `ready: true` does not guarantee the registry of `image` is allowed — that is checked at upload time.",
+        "Pre-flight check for deploy_app: surfaces the caller's wallet balances, credit account, requested SKU availability, and a human-readable list of missing steps. Use this before deploy_app to decide whether to fund credits, switch SKU, or top up the wallet. Note: the chain does not expose provider allowed_registries, so a `ready: true` does not guarantee the registry of `image` is allowed — that is checked at upload time. Likewise, providers running Fred PR #242 or later check image admission only while provisioning (an HTTPS registry, the provider image size budget, at most 128 layers, and a manifest for the provider platform); a refusal surfaces as reason ImagePullFailed.",
       inputSchema: {
         size: z
           .string()
@@ -917,7 +918,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'restart_app',
     {
       description:
-        'Restart an app via the provider without closing its lease. Fred v0.13 has no command deduplication: reconcile uncertain results before another attempt. For providers configured for PR #240, retain the returned idempotency_key and reuse it for the same logical command; a different key requests another restart.',
+        'Restart an app via the provider without closing its lease. Fred v0.13 has no command deduplication: reconcile uncertain results before another attempt. For providers configured for PR #240, retain the returned idempotency_key and reuse it for the same logical command; a different key requests another restart. On providers running Fred PR #242 or later, a restart reuses the pinned image and never fetches new content for a moved tag; use update_app with a new image reference for that.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -1009,7 +1010,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'update_app',
     {
       description:
-        'Update a deployed app without closing its lease. Fred v0.13 has no command deduplication: reconcile uncertain results before another attempt. For providers configured for PR #240, retain the returned idempotency_key and reuse it with the exact final manifest; a different key requests another update.',
+        'Update a deployed app without closing its lease. Fred v0.13 has no command deduplication: reconcile uncertain results before another attempt. For providers configured for PR #240, retain the returned idempotency_key and reuse it with the exact final manifest; a different key requests another update. Providers running Fred PR #242 or later pin each admitted image to its lease and manifest, so resubmitting an unchanged manifest reuses the pinned image even if its tag has moved: to deploy new image content, change the image reference, preferably to a digest (name@sha256:...).',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -1152,7 +1153,25 @@ export function registerTools(deps: RegisterToolsDeps): void {
         authToken,
         ctx.fetch,
         ctx.allowLoopback,
-      );
+      ).catch((err: unknown) => {
+        // Fred PR #243 answers 410 for a lease whose backend an operator retired
+        // as lost. There is no provision record or fail_count to report, so
+        // surface the definitive cause and its guidance instead of the raw body.
+        if (!isBackendStorageLost(err)) throw err;
+        const lost = FRED_REASON_GUIDANCE.BackendStorageLost;
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          `The provider has no diagnostics for lease ${leaseUuid}. ${lost.explanation} ${lost.nextStep}`,
+          {
+            lease_uuid: leaseUuid,
+            lease_state: leaseStateToJSON(lease.state),
+            provider_status: 410,
+            provider_reason: 'backend_storage_lost',
+            reason: 'BackendStorageLost',
+            next_step: lost.nextStep,
+          },
+        );
+      });
 
       // ENG-638: `next_step` is derived, not from the wire — guidanceFor
       // returns undefined for a reason this client does not recognize, which is

@@ -11,6 +11,12 @@ import {
   sealedFetchProbe,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { describe, expect, it, vi } from 'vitest';
+import {
+  BACKEND_STORAGE_LOST,
+  CAPACITY_RESERVED,
+  KEY_REQUIRED,
+  MAINTENANCE_EXPIRED,
+} from '../__test-utils__/fred-error-bodies.js';
 import type {
   FredCompatibility,
   FredCompatibilityConfig,
@@ -247,6 +253,74 @@ describe.each(operations)(
       expect(isRetryableError(foreign)).toBe(false);
       expect(wire.calls).toHaveLength(1);
     });
+
+    it('reports a PR #240 provider refusing the keyless command as not run, with the configuration fix', async () => {
+      const { ctx, wire } = fixture(name, KEY_REQUIRED);
+      const error = await withRetry(() => invoke(ctx, options), {
+        config: { maxRetries: 2, baseDelayMs: 0 },
+      }).catch((err) => err);
+      expect(error).toBeInstanceOf(ProviderApiError);
+      expect(error.status).toBe(400);
+      expect(error.details).toMatchObject({
+        lease_uuid: LEASE_UUID,
+        operation: name,
+        outcome: 'unknown',
+        provider_status: 400,
+      });
+      expect(error.details).not.toHaveProperty('idempotency_key');
+      expect(error.details.next_step).toContain('MANIFEST_FRED_COMPATIBILITY');
+      expect(error.details.next_step).toContain(
+        'maintenance_legacy_idempotency_tenants',
+      );
+      // The MCP layer surfaces this typed cause (server/maintenance-error.ts).
+      expect(error.cause).toMatchObject({
+        code: ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+      });
+      expect(error.cause.message).toContain('The command did not run');
+      expect(error.cause.message).not.toContain('may or may not');
+      expect(isRetryableError(error)).toBe(false);
+      expect(isTransientProviderError(error)).toBe(false);
+      expect(wire.calls).toHaveLength(1);
+    });
+
+    it.each([
+      {
+        response: MAINTENANCE_EXPIRED,
+        reason: 'maintenance_expired',
+        nextStep: 'submit it as a new command',
+      },
+      {
+        response: BACKEND_STORAGE_LOST,
+        reason: 'backend_storage_lost',
+        nextStep: 'Do not retry restart, update, or restore',
+      },
+      {
+        response: CAPACITY_RESERVED,
+        reason: 'maintenance_capacity_reserved',
+        nextStep: `send the ${name} again`,
+      },
+    ])(
+      'gives a listed legacy tenant the guidance for $reason without inventing a key',
+      async ({ response, reason, nextStep }) => {
+        const { ctx, wire } = fixture(name, response);
+        const error = await withRetry(() => invoke(ctx, options), {
+          config: { maxRetries: 2, baseDelayMs: 0 },
+        }).catch((err) => err);
+        expect(error).toBeInstanceOf(ProviderApiError);
+        expect(error.details).toMatchObject({
+          outcome: 'unknown',
+          provider_status: response.status,
+          provider_reason: reason,
+        });
+        expect(error.details).not.toHaveProperty('idempotency_key');
+        expect(error.details.next_step).toContain(nextStep);
+        expect(error.details.next_step).not.toMatch(/idempotency.key/i);
+        expect(error.cause.message).not.toContain('may or may not');
+        expect(isRetryableError(error)).toBe(false);
+        expect(isTransientProviderError(error)).toBe(false);
+        expect(wire.calls).toHaveLength(1);
+      },
+    );
   },
 );
 
@@ -422,6 +496,124 @@ describe.each(operations)(
       expect(isRetryableError(error)).toBe(false);
       expect(wire.calls).toHaveLength(1);
     });
+
+    it('410 maintenance_expired is a settled refusal: the next attempt needs a new key', async () => {
+      const { ctx, wire } = fixture(name, MAINTENANCE_EXPIRED);
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+      }).catch((err) => err);
+      expect(error).toBeInstanceOf(ManifestMCPError);
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+        details: {
+          idempotency_key: COMMAND_KEY,
+          outcome: 'unknown',
+          provider_status: 410,
+          provider_reason: 'maintenance_expired',
+        },
+      });
+      expect(error.message).toContain('The command did not run');
+      expect(error.message).toContain('do not reuse its key');
+      expect(error.message).not.toContain('reuse this key');
+      expect(error.details.next_step).toContain('new idempotency key');
+      expect(isRetryableError(error)).toBe(false);
+      expect(wire.calls).toHaveLength(1);
+    });
+
+    it('410 backend_storage_lost is terminal for the lease: no retry with any key', async () => {
+      const { ctx, wire } = fixture(name, BACKEND_STORAGE_LOST);
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+      }).catch((err) => err);
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+        details: {
+          idempotency_key: COMMAND_KEY,
+          provider_status: 410,
+          provider_reason: 'backend_storage_lost',
+        },
+      });
+      expect(error.message).toContain('irrecoverably lost');
+      expect(error.message).not.toContain('reuse this key');
+      expect(error.details.next_step).toContain(
+        'Do not retry restart, update, or restore',
+      );
+      expect(isRetryableError(error)).toBe(false);
+      expect(wire.calls).toHaveLength(1);
+    });
+
+    it('429 maintenance_capacity_reserved was not recorded: the same command may follow pending work', async () => {
+      const { ctx, wire } = fixture(name, CAPACITY_RESERVED);
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+      }).catch((err) => err);
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+        details: {
+          idempotency_key: COMMAND_KEY,
+          outcome: 'unknown',
+          provider_status: 429,
+          provider_reason: 'maintenance_capacity_reserved',
+          retry_after_ms: 1000,
+        },
+      });
+      expect(error.message).toContain('did not record');
+      expect(error.details.next_step).toContain(
+        `retry with idempotency_key ${COMMAND_KEY}`,
+      );
+      // Fred answers 409 for pending work on THIS lease before its reserve
+      // check, so the work holding the reserve is on another lease.
+      expect(error.details.next_step).toContain(
+        'pending maintenance on your other lease completes',
+      );
+      if (name === 'update')
+        expect(error.details.next_step).toContain(
+          'exact same manifest payload',
+        );
+      // A deliberate retry after pending work, never an automatic one.
+      expect(isRetryableError(error)).toBe(false);
+      expect(isTransientProviderError(error)).toBe(false);
+      expect(wire.calls).toHaveLength(1);
+    });
+
+    it.each([
+      // A 5xx stays uncertain whatever its body says.
+      {
+        status: 503,
+        text: '{"error":"service temporarily unavailable","code":503,"reason":"maintenance_expired"}',
+      },
+      // A reason Fred sends with another status is not that answer.
+      {
+        status: 409,
+        text: '{"error":"conflict","code":409,"reason":"maintenance_capacity_reserved"}',
+      },
+      // The body must be Fred's own: an intermediary's mismatched code is not.
+      {
+        status: 410,
+        text: '{"error":"gone","code":404,"reason":"maintenance_expired"}',
+      },
+    ])(
+      'keeps the exact-retry guidance when the answer is not definitive: $status',
+      async (response) => {
+        const { ctx, wire } = fixture(name, response);
+        const error = await invoke(ctx, {
+          ...options,
+          idempotencyKey: COMMAND_KEY,
+        }).catch((err) => err);
+        expect(error.details).toMatchObject({
+          idempotency_key: COMMAND_KEY,
+          outcome: 'unknown',
+          provider_status: response.status,
+        });
+        expect(error.details).not.toHaveProperty('next_step');
+        expect(error.message).toContain('reuse this key');
+        expect(isRetryableError(error)).toBe(false);
+        expect(wire.calls).toHaveLength(1);
+      },
+    );
 
     it('poll deadline preserves command acceptance and the original readiness error', async () => {
       const { ctx, wire } = fixture(name, { status: 202, json: { status } });

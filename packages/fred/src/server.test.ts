@@ -113,6 +113,10 @@ import {
   makeMockQueryClient,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import {
+  BACKEND_STORAGE_LOST,
+  KEY_REQUIRED,
+} from './__test-utils__/fred-error-bodies.js';
 import type { FredCompatibilityConfig } from './compatibility.js';
 import {
   getLeaseProvision,
@@ -696,6 +700,70 @@ describe('FredMCPServer', () => {
       expect(parsed.message).toContain('has no API URL');
       expect(mockGetLeaseProvision).not.toHaveBeenCalled();
     });
+
+    it('turns Fred PR #243 storage loss into its cause and next step, without inventing a fail_count', async () => {
+      mockFetchLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+        state: LeaseState.LEASE_STATE_CLOSED,
+      } as Awaited<ReturnType<typeof fetchLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockRejectedValue(
+        new ProviderApiError(
+          BACKEND_STORAGE_LOST.status,
+          BACKEND_STORAGE_LOST.text,
+          { kind: 'http' },
+        ),
+      );
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('QUERY_FAILED');
+      expect(parsed.message).toContain('irrecoverably lost');
+      expect(parsed.details).toMatchObject({
+        lease_uuid: LEASE_UUID,
+        lease_state: 'LEASE_STATE_CLOSED',
+        provider_status: 410,
+        provider_reason: 'backend_storage_lost',
+        reason: 'BackendStorageLost',
+      });
+      expect(parsed.details.next_step).toContain('No tenant action exists');
+      expect(parsed.details.next_step).toContain('deploy_app');
+      expect(parsed.details).not.toHaveProperty('fail_count');
+    });
+
+    it('keeps any other provider refusal as the provider error', async () => {
+      mockFetchLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockRejectedValue(
+        new ProviderApiError(404, '{"error":"lease not found","code":404}', {
+          kind: 'http',
+        }),
+      );
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).not.toBe('QUERY_FAILED');
+      expect(parsed.message).toContain('lease not found');
+    });
   });
 
   describe('app_releases', () => {
@@ -1208,6 +1276,10 @@ describe('FredMCPServer', () => {
       // The two facts a model cannot infer from the enum name.
       expect(text).toContain('may EXTEND');
       expect(text).toContain('UpdateFailed');
+      // Fred PR #243: a lost backend is terminal, so the model must not offer
+      // the maintenance tools that cannot reach it.
+      expect(text).toContain('BackendStorageLost');
+      expect(text).toContain('Do not suggest restart, update, or restore');
       expect(text).not.toContain(
         'record provision_status, fail_count, and last_error',
       );
@@ -2293,6 +2365,36 @@ describe('MCP Fred compatibility wiring', () => {
       });
       expect(error.details).not.toHaveProperty('idempotency_key');
       expect(error.message).toContain('does not support command deduplication');
+    },
+  );
+
+  it.each(['restart_app', 'update_app'] as const)(
+    '%s explains a PR #240 provider refusing the keyless legacy command',
+    async (tool) => {
+      const mock = tool === 'restart_app' ? mockRestartApp : mockUpdateApp;
+      mock.mockRejectedValueOnce(
+        maintenanceRequestError(
+          new ProviderApiError(KEY_REQUIRED.status, KEY_REQUIRED.text, {
+            kind: 'http',
+          }),
+          LEASE_UUID,
+          undefined,
+          tool === 'restart_app' ? 'restart' : 'update',
+        ),
+      );
+      const result = await callTool(server('v0.13'), tool, {
+        lease_uuid: LEASE_UUID,
+        ...(tool === 'update_app' && { manifest: '{"image":"nginx"}' }),
+      });
+      expect(result.isError).toBe(true);
+      const error = JSON.parse(result.content[0]!.text);
+      expect(error).toMatchObject({
+        code: 'MAINTENANCE_REQUEST_FAILED',
+        details: { provider_status: 400, outcome: 'unknown' },
+      });
+      expect(error.message).toContain('The command did not run');
+      expect(error.message).not.toContain('may or may not');
+      expect(error.details.next_step).toContain('MANIFEST_FRED_COMPATIBILITY');
     },
   );
 

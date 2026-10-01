@@ -14,10 +14,40 @@ rollout.
 
 PR #243 adds tenant `410` answers with a `reason`: `backend_storage_lost` for a
 lease whose backend an operator retired as lost, and `maintenance_expired` for a
-restart or update older than the lease's retained maintenance history. A lost
+restart or update older than the newest command Fred has accepted for the lease.
+PR #242 adds `429` with `maintenance_capacity_reserved` when the provider's
+shared maintenance capacity is held for tenants without pending work. A lost
 lease's `/status` instead reports `provision_status: failed` with the failure
-reason `BackendStorageLost`. Mono treats `reason` as an open string and surfaces
-these as provider errors.
+reason `BackendStorageLost`. Mono treats `reason` as an open string and records
+any well-formed body `reason` as `details.provider_reason`. Only these three
+exact status and reason pairs replace the exact-retry advice with a specific
+`next_step`: a new key after `maintenance_expired`, no further maintenance or
+restore after `backend_storage_lost`, and the same command for
+`maintenance_capacity_reserved` once the tenant's command pending on another
+lease completes. The automatic-retry veto and `outcome: 'unknown'` are
+unchanged. `app_diagnostics` and the restore pre-flight report storage loss as
+a definitive answer instead of the raw body. Fred gives these answers only
+until the lease has ended and a later sweep prunes its placement record; it
+then answers like any other ended lease.
+
+PR #243 also lets an operator keep pre-PR240 clients working: a tenant address
+listed in `maintenance_legacy_idempotency_tenants` may omit `Idempotency-Key`,
+and Fred keys each such request by its single-use signed token, so every retry
+is a new command, as in v0.13. Any other keyless restart or update receives
+`400` (`Idempotency-Key header must occur exactly once`) before Fred records it.
+In v0.13 mode mono reports that refusal as a command that did not run, with the
+two fixes. The list holds exact addresses, so it suits a fixed agent wallet; an
+application whose users sign with their own wallets, such as a browser front
+end, should instead map each upgraded provider URL to `pr240` as it upgrades.
+
+PR #242 pins each admitted image to its lease and manifest. Resubmitting an
+unchanged manifest, including an exact retry, reuses the pinned image even if
+its tag has moved, and a restart reuses it too. To deploy new image content,
+change the image reference, preferably to a digest. Image admission also
+requires an HTTPS registry and enforces the provider's image size budget
+(10 GiB by default), at most 128 layers, a manifest for the provider platform,
+and supported layer contents; a refusal surfaces as `ImagePullFailed`, which a
+`ready` lease can retain after a failed update.
 
 ## Client changes
 
@@ -41,7 +71,11 @@ these as provider errors.
   The default preserves v0.13 admission; PR240 adds reserved Compose labels,
   Unicode case folding, and stricter user syntax. The vendored schema remains a
   PR240 drift/test artifact. Image-baked reserved labels also cause PR240
-  admission refusal; rebuilding the image is required in that case.
+  admission refusal; rebuilding the image is required in that case. Since
+  PR #242, the three exact Compose build stamps (`com.docker.compose.project`,
+  `.service`, and `.version`) are the exception: Fred discards their image
+  values, so Compose-built images carrying only those need no rebuild. Manifest
+  labels with the `com.docker.compose.` prefix remain reserved.
 - Previews identify their applied policy in `validation.fred_compatibility`.
   Standalone MCP preview with a provider map uses v0.13 until a provider is
   selected. Orchestrated previews use the selected provider's actual policy,

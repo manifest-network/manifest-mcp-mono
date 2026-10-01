@@ -56,7 +56,9 @@ vi.mock('./resolveLeaseProvider.js', () => ({ resolveProviderUrl: vi.fn() }));
 import { cosmosTx } from '@manifest-network/manifest-mcp-core';
 import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { makeSealedClientManager } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { BACKEND_STORAGE_LOST } from '../__test-utils__/fred-error-bodies.js';
 import { unreadableErrors } from '../__test-utils__/unreadable-errors.js';
+import { ProviderApiError } from '../http/provider.js';
 import { createLease } from './createLease.js';
 import { fetchLease } from './fetchLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
@@ -250,6 +252,47 @@ describe('restoreApp', () => {
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.RESTORE_NOT_RETAINED,
     });
+    expect(mockCreateLease).not.toHaveBeenCalled();
+  });
+
+  it('pre-flight: a source whose storage the provider lost is not restorable and creates nothing', async () => {
+    mockSource();
+    routeWire({ provision: BACKEND_STORAGE_LOST });
+    const error = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: false },
+    ).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(ManifestMCPError);
+    expect(error).toMatchObject({
+      code: ManifestMCPErrorCode.RESTORE_NOT_RETAINED,
+      details: {
+        source_lease_uuid: SOURCE,
+        provider_status: 410,
+        provider_reason: 'backend_storage_lost',
+      },
+    });
+    expect((error as Error).message).toContain('irrecoverably lost');
+    expect((error as Error).message).toContain('No lease was created');
+    expect(urls()).toEqual(['provision']);
+    expect(mockCreateLease).not.toHaveBeenCalled();
+  });
+
+  it('pre-flight: another 410 keeps its provider error, without a restore verdict', async () => {
+    mockSource();
+    routeWire({
+      provision: {
+        status: 410,
+        text: '{"error":"gone","code":410,"reason":"some_future_reason"}',
+      },
+    });
+    const error = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: false },
+    ).catch((err: unknown) => err);
+    expect(ProviderApiError.isProviderApiError(error)).toBe(true);
+    expect(error).toMatchObject({ status: 410 });
     expect(mockCreateLease).not.toHaveBeenCalled();
   });
 
