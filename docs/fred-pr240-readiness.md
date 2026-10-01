@@ -13,10 +13,11 @@ requires explicit opt-in. Revalidate against Fred's released revision before
 rollout.
 
 PR #243 adds tenant `410` answers with a `reason`: `backend_storage_lost` for a
-lease whose backend an operator retired as lost (its status reports
-`provision_status: failed` with that reason), and `maintenance_expired` for a
-restart or update older than the lease's retained maintenance history. Mono
-treats `reason` as an open string and surfaces both as provider errors.
+lease whose backend an operator retired as lost, and `maintenance_expired` for a
+restart or update older than the lease's retained maintenance history. A lost
+lease's `/status` instead reports `provision_status: failed` with the failure
+reason `BackendStorageLost`. Mono treats `reason` as an open string and surfaces
+these as provider errors.
 
 ## Client changes
 
@@ -118,8 +119,9 @@ maintenance headers fit each provider's CORS policy; these are not a browser run
 
 `e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
 the latest live status/release observation. That observation records its Fred
-revision and run, and it stays at `4f00091` until a green live run at the current
-pin replaces it. The diagnostics
+revision and run; it now comes from the green nightly run at Fred `main`
+`8a26371`, whose key sets matched the earlier `4f00091` observation. Replace it
+only from a green live run at a newer pin. The diagnostics
 projection records `lease_state` as a required field derived by mono. Conditional
 fields not seen in a healthy run retain their baseline provenance; do not invent
 observations from Go source. Local unit and bootstrap-script tests do not
