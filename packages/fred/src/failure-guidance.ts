@@ -55,10 +55,13 @@ export const FRED_REASON_GUIDANCE: Readonly<
     actor: 'tenant',
   },
   ImagePullFailed: {
-    explanation: 'The provider could not pull the container image.',
+    explanation:
+      'The provider could not pull or admit the image: a wrong or private reference, a non-HTTPS registry, an image over the provider size budget or 128 layers, no manifest for its platform, unsupported layer contents, or a registry rate limit or stall (Fred PR #242 admission). If app_status reports ready, the previous release is still running.',
     nextStep:
-      'Check the image reference is exact and publicly pullable — no private-registry credentials are available to the provider — then update_app with a corrected image.',
+      'Check the image reference is exact and publicly pullable over HTTPS — no private-registry credentials are available to the provider. If it is, slim or rebuild the image within the provider limits and update_app with a new reference, preferably a digest; a registry rate limit clears on a later attempt.',
     actor: 'tenant',
+    // A failed update keeps the previous release running with this reason.
+    mayBeHistorical: true,
   },
   Internal: {
     explanation:
@@ -101,6 +104,17 @@ export const FRED_REASON_GUIDANCE: Readonly<
       'Cleanup of containers or volumes on deprovision failed. The lease itself is closed.',
     nextStep:
       'No tenant action exists. Report the lease UUID to the provider operator if resources appear to be leaking.',
+    actor: 'provider',
+  },
+  BackendStorageLost: {
+    explanation:
+      "The provider operator retired this lease's backend because its storage was irrecoverably lost (Fred PR #243). The app and its data on that provider are gone. The provider ends the lease on chain only in a later reconciliation sweep, so it can still be ACTIVE and billing: check app_status chainState.",
+    // Provider-side: nothing recovers this lease or its data. A fresh deployment
+    // is a new lease, not a retry, so the dead-end phrase still applies. Fred can
+    // report this reason while the lease is ACTIVE (its lost_lease_test), and its
+    // reconciler may defer the chain close, so closing is cleanup, not recovery.
+    nextStep:
+      'No tenant action exists to recover this lease or its data: restart_app, update_app, and restore_app all fail for it. Deploy a fresh lease with deploy_app and restore your data from your own backups. While app_status still shows this lease ACTIVE, you can close it with close_lease (manifest-mcp-lease) instead of waiting for the provider.',
     actor: 'provider',
   },
   Unknown: {

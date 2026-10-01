@@ -54,6 +54,39 @@ describe('FRED_REASON_GUIDANCE', () => {
     // will tell the tenant to retry a storage failure they have no access to.
     expect(FRED_REASON_GUIDANCE.CleanupFailed.actor).toBe('provider');
     expect(FRED_REASON_GUIDANCE.VolumeCleanupExhausted.actor).toBe('provider');
+    expect(FRED_REASON_GUIDANCE.BackendStorageLost.actor).toBe('provider');
+  });
+
+  it('never offers maintenance on a lease whose backend storage was lost', () => {
+    // Fred PR #243 answers restart, update, and restore with 410 for this lease:
+    // the only forward path is a NEW deployment, never a retry of this one.
+    const lost = FRED_REASON_GUIDANCE.BackendStorageLost;
+    expect(lost.nextStep).toContain('deploy_app');
+    expect(lost.nextStep).toContain(
+      'restart_app, update_app, and restore_app all fail',
+    );
+    expect(lost.mayBeHistorical).toBeUndefined();
+  });
+
+  it('never claims a lease with lost storage is already closed on chain', () => {
+    // Fred serves this reason while the lease is still ACTIVE, and its reconciler
+    // can defer the chain close (lost_lease_test.go, DEPLOYMENT.md), so the row
+    // must send the reader to the actual chain state.
+    const lost = FRED_REASON_GUIDANCE.BackendStorageLost;
+    expect(lost.explanation).not.toMatch(/closed on chain/);
+    expect(lost.explanation).toContain('later reconciliation sweep');
+    expect(lost.explanation).toContain('app_status chainState');
+    expect(lost.nextStep).toContain('close_lease');
+  });
+
+  it('flags ImagePullFailed as possibly historical (a failed update keeps the previous release)', () => {
+    // Fred PR #242 checks image admission before replacing any container, and a
+    // ready lease keeps the failed attempt's reason.
+    const pull = FRED_REASON_GUIDANCE.ImagePullFailed;
+    expect(pull.mayBeHistorical).toBe(true);
+    expect(pull.explanation).toContain('If app_status reports ready');
+    expect(pull.explanation).toContain('128 layers');
+    expect(pull.nextStep).toContain('update_app');
   });
 
   it('classifies Internal as tenant-ACTIONABLE despite being provider-caused', () => {

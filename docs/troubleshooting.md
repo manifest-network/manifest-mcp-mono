@@ -66,7 +66,7 @@ Most errors returned to the MCP client are JSON objects with a `code` field draw
 | SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
 | Deploy | `DEPLOY_READINESS_UNCONFIRMED` | A paid lease exists, but the client cannot safely confirm it as ready. Either the readiness poll ended without a verdict, or the canonical final provider state was absent, malformed, or not ACTIVE. Carries `details.readiness_unconfirmed`, `lease_uuid`, and `partial`; orchestration final-state disagreement additionally carries `readiness_reason: 'final_state_mismatch'`, `state_source`, and bounded `observed_state`. Diagnose the existing lease instead of repeating `deploy_app` — see below |
 | Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_ORPHAN_COMPENSATION_FAILED`, `RESTORE_COMMITTED_FAILURE`; compatibility-only `RESTORE_RETRYABLE` | Source not restorable (pre-flight, zero side effects), a locally known failure before the POST successfully compensated, unknown adoption / failed compensation, or a provider failure verdict after adoption. Current `restoreApp` does not emit `RESTORE_RETRYABLE`. Every restore POST exception, including all 4xx/5xx, network failures and malformed 2xx, preserves both lease IDs for reconciliation; do not cancel an uncertain target. `provider_status`, `provider_error_kind`, and `retry_after_ms` are diagnostic only: 429 with `Retry-After` does not authorize replay. All non-auto-retryable — restore is non-idempotent |
-| Maintenance | `UPDATE_INDETERMINATE`, `RESTART_INDETERMINATE`, `MAINTENANCE_REQUEST_FAILED`, `MAINTENANCE_WAIT_FAILED` | A maintenance POST has an uncertain outcome or a readiness wait failed. Reconcile `app_status` / `app_releases`; never automatically replay the mutation. Default v0.13 mode has no command key or deduplication. Explicit PR240 mode carries `details.idempotency_key`: preserve it, the lease, operation, and exact payload. Intentional PR240 retries reuse the original key with fresh authentication; a new key starts another command. Accepted-wait errors retain their original readiness/configuration diagnosis and command context. |
+| Maintenance | `UPDATE_INDETERMINATE`, `RESTART_INDETERMINATE`, `MAINTENANCE_REQUEST_FAILED`, `MAINTENANCE_WAIT_FAILED` | A maintenance POST has an uncertain outcome or a readiness wait failed. Reconcile `app_status` / `app_releases`; never automatically replay the mutation. Default v0.13 mode has no command key or deduplication. Explicit PR240 mode carries `details.idempotency_key`: preserve it, the lease, operation, and exact payload. Intentional PR240 retries reuse the original key with fresh authentication; a new key starts another command. Exceptions are named by `details.provider_reason`, and their `next_step` replaces that advice: `410 maintenance_expired` needs a new key, `410 backend_storage_lost` admits no retry, and `429 maintenance_capacity_reserved` waits for your pending command on another lease (see [library usage](library-usage.md#restarting-and-updating-with-a-command-key)). In v0.13 mode, a `400` saying `Idempotency-Key` is required means the provider runs Fred PR #240 or later and the command did not run. Accepted-wait errors retain their original readiness/configuration diagnosis and command context. |
 
 ### `INVALID_CONFIG` from a transaction tool
 
@@ -187,6 +187,7 @@ Common causes:
 - Image registry is allowlisted differently than you expected (the `allowed_registries` list isn't on-chain — it's provider config, only checked at upload time).
 - Image is private and the provider doesn't have credentials.
 - Tags don't exist (e.g. `myapp:lates` typo).
+- The image fails admission on a provider running Fred PR #242 or later (surfaces as `ImagePullFailed`): its registry is not reachable over HTTPS, it exceeds the provider's image size budget (10 GiB by default), it has more than 128 layers, it has no manifest for the provider platform, or a layer has unsupported contents (sparse files, duplicate paths, dangling hardlinks). A registry rate limit or a stalled download fails the pull too; a later attempt can succeed.
 - Resource limits in the SKU don't fit the container (rare; usually surfaces as a `ContainerExited` reason).
 
 ### Reading `reason`
@@ -199,13 +200,14 @@ surface it on `message`, so either provider generation gives you a usable diagno
 | `reason` | Meaning | Who can act |
 |---|---|---|
 | `ContainerExited` | Container exited unexpectedly (crash, non-zero exit, OOM kill) | you |
-| `ImagePullFailed` | The image could not be pulled | you |
-| `Internal` | Internal provider error, not your workload | provider |
+| `ImagePullFailed` | The image could not be pulled or failed admission — **after a failed update, the previous version can still be running** | you |
+| `Internal` | Internal provider error, not your workload; often transient | you (retry once, then escalate) |
 | `RestartFailed` | A restart you requested did not complete | you |
 | `UpdateFailed` | An update failed and rolled back — **the app is still running the previous version** | you |
 | `RestoreFailed` | A restore from retained data did not complete | you |
 | `VolumeCleanupExhausted` | Volume cleanup failed after every retry | provider |
 | `CleanupFailed` | Container/volume cleanup on deprovision failed | provider |
+| `BackendStorageLost` | The provider irrecoverably lost the storage holding the lease (Fred PR #243); the app and its data on that provider are gone. The provider ends the lease on chain only in a later sweep, so it can still be ACTIVE and billing: check `app_status` `chainState` | nobody can recover this lease: deploy a new one and restore data from your own backups; you can `close_lease` a lease that is still ACTIVE yourself |
 | `Unknown` | Marked failed with no specific cause recorded | you |
 
 Two things to keep in mind:
@@ -215,7 +217,20 @@ Two things to keep in mind:
   pass unknown values through untouched and simply omit `next_step`.
 - **A non-empty `reason` does not mean the app is down.** Fred keeps the attribution on a healthy
   lease whose last update rolled back, so a `ready` app can legitimately report
-  `reason: UpdateFailed`. Decide liveness from `provision_status`, not from the presence of `reason`.
+  `reason: UpdateFailed` or `ImagePullFailed`. Decide liveness from `provision_status`, not from the
+  presence of `reason`.
+- **A lost backend is final.** For a `BackendStorageLost` lease, `app_status` reports the reason.
+  `app_diagnostics` reports the provider's `410 backend_storage_lost` with a `next_step`, and a
+  `restore_app` naming the lease as the source refuses it as `RESTORE_NOT_RETAINED` before
+  creating anything. The provider's reconciler ends the lease on chain only in a later sweep, and
+  an untrusted report of the lease or pending inventory recovery can defer that, so read
+  `chainState` instead of assuming the lease has ended. While it is still ACTIVE it may still be
+  billing (you can close it yourself with `close_lease`), and the provider answers `get_logs`,
+  `app_releases`, `restart_app`, and `update_app` with the same `410`: the maintenance tools report
+  it with a `next_step`, and `get_logs` and `app_releases` return the provider's body. Once the
+  lease has ended, those tools refuse it as inactive. Fred gives these answers only until the
+  lease has ended and a later sweep prunes its placement record; it then answers like any other
+  ended lease and no longer reports the cause.
 
 ## Auth token rejected by the provider
 

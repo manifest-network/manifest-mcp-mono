@@ -9,6 +9,10 @@ import {
   ProviderApiError,
   type ProviderApiErrorOptions,
 } from './http/provider.js';
+import {
+  isIdempotencyKeyRequired,
+  providerErrorReason,
+} from './http/provider-error-reason.js';
 import { resolveMaintenanceIdempotencyKey } from './maintenance.js';
 
 interface MaintenanceCommand {
@@ -115,6 +119,7 @@ function commandDetails(
   context: MaintenanceContext,
 ): Record<string, unknown> {
   const observed = providerSnapshot(cause);
+  const providerReason = providerErrorReason(cause);
   return {
     ...errorDetails(cause),
     lease_uuid: context.leaseUuid,
@@ -137,7 +142,64 @@ function commandDetails(
         retry_after_ms: observed.retryAfterMs,
       }),
     }),
+    // Fred's definitive-answer code from its error body, e.g. maintenance_expired.
+    ...(providerReason !== undefined && { provider_reason: providerReason }),
   };
+}
+
+interface DefinitiveAnswer {
+  readonly summary: string;
+  readonly nextStep: string;
+}
+
+/**
+ * Recovery guidance for Fred's definitive maintenance answers (Fred PRs #242 and
+ * #243), each identified by its exact status and body `reason`. Details keep
+ * `outcome: 'unknown'` and the retry veto; `provider_reason` names the answer.
+ *
+ * - `410 maintenance_expired`: Fred settled the command without running it. Its
+ *   key now names that settled refusal, so a new attempt needs a new key.
+ * - `410 backend_storage_lost`: the lease's workload and data are gone.
+ * - `429 maintenance_capacity_reserved`: Fred did not record the command, so the
+ *   same command (and key) may be sent again once the tenant's pending work on
+ *   another lease completes.
+ *
+ * `commandDetails` reports `provider_reason` for any well-formed reason; only
+ * these exact status/reason pairs change the guidance.
+ */
+function definitiveAnswer(
+  cause: unknown,
+  context: MaintenanceContext,
+): DefinitiveAnswer | undefined {
+  const status = providerSnapshot(cause)?.status;
+  const reason = providerErrorReason(cause);
+  const { operation, leaseUuid, idempotencyKey } = context;
+  const keyed = idempotencyKey !== undefined;
+  if (status === 410 && reason === 'maintenance_expired') {
+    return {
+      summary: `The provider refused ${operation} for lease ${leaseUuid} because it is older than the newest maintenance command the provider has accepted for the lease. The command did not run${keyed ? '; do not reuse its key' : ''}.`,
+      nextStep: `Check app_status and app_releases; if the ${operation} is still needed, submit it as a new command${keyed ? ' with a new idempotency key' : ''}.`,
+    };
+  }
+  if (status === 410 && reason === 'backend_storage_lost') {
+    return {
+      summary: `The provider irrecoverably lost the storage holding lease ${leaseUuid}: the app and its data on this provider are gone, and the ${operation} did not run. The provider ends the lease on chain only in a later reconciliation sweep, so it can still be ACTIVE and billing.`,
+      nextStep:
+        'Do not retry restart, update, or restore for this lease. Deploy a new lease and restore your data from your own backups. While app_status still shows this lease ACTIVE, you can close it with close_lease (manifest-mcp-lease) instead of waiting for the provider.',
+    };
+  }
+  if (status === 429 && reason === 'maintenance_capacity_reserved') {
+    const retry = keyed
+      ? `retry with idempotency_key ${idempotencyKey}${operation === 'update' ? ' and the exact same manifest payload' : ''}`
+      : `send the ${operation} again`;
+    // Fred refuses a new command on a lease with pending work as a 409 conflict
+    // before the reserve check, so the pending work is on another lease.
+    return {
+      summary: `The provider did not record ${operation} for lease ${leaseUuid}: its shared maintenance capacity is nearly full, and it keeps the remainder for tenants without pending work, while you already have a restart or update pending on another of your leases on this provider.`,
+      nextStep: `Wait until the pending maintenance on your other lease completes (check app_status for your other leases on this provider), then ${retry} with fresh provider authentication, backing off between attempts; Retry-After is only a lower bound.`,
+    };
+  }
+  return undefined;
 }
 
 function retainCauseAndStack<T extends Error>(error: T, cause: unknown): T {
@@ -184,11 +246,34 @@ function legacyMaintenanceError(
   context: MaintenanceContext,
   code = ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
 ): ManifestMCPError {
+  const excerpt = capProviderText(
+    failureText(cause),
+    PROVIDER_TEXT_EXCERPT_CHARS,
+  );
+  // A PR #240 or newer provider refuses a keyless command before recording it.
+  if (isIdempotencyKeyRequired(cause)) {
+    const nextStep = `Configure this provider for PR #240 compatibility (the fredCompatibility option, or MANIFEST_FRED_COMPATIBILITY for the MCP servers) so each command carries an idempotency key, or ask the operator of a provider running Fred PR #243 or later to list your address in maintenance_legacy_idempotency_tenants; then send the ${context.operation} again.`;
+    return typedError(
+      code,
+      `The provider refused ${context.operation} for lease ${context.leaseUuid}: it requires an Idempotency-Key on every restart and update (the Fred PR #240 maintenance contract), which this client omits in v0.13 compatibility mode. The command did not run. ${nextStep} Cause: ${excerpt}`,
+      { ...commandDetails(cause, context), next_step: nextStep },
+      cause,
+    );
+  }
+  const answer = definitiveAnswer(cause, context);
+  if (answer !== undefined) {
+    return typedError(
+      code,
+      `${answer.summary} ${answer.nextStep} Cause: ${excerpt}`,
+      { ...commandDetails(cause, context), next_step: answer.nextStep },
+      cause,
+    );
+  }
   const guidance =
     'Check app_status and app_releases before deliberately submitting another command. Fred v0.13 does not support command deduplication; do not automatically replay this request or close the lease to recover from this error.';
   return typedError(
     code,
-    `The ${context.operation} outcome for lease ${context.leaseUuid} is unknown: it may or may not have been applied. ${guidance} Cause: ${capProviderText(failureText(cause), PROVIDER_TEXT_EXCERPT_CHARS)}`,
+    `The ${context.operation} outcome for lease ${context.leaseUuid} is unknown: it may or may not have been applied. ${guidance} Cause: ${excerpt}`,
     { ...commandDetails(cause, context), next_step: guidance },
     cause,
   );
@@ -266,6 +351,16 @@ export function maintenanceError(
     priorDetails.outcome === context.outcome
   )
     return prior as ManifestMCPError;
+
+  const answer = definitiveAnswer(cause, context);
+  if (answer !== undefined) {
+    return typedError(
+      ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+      `${answer.summary} ${answer.nextStep} Command idempotency_key: ${idempotencyKey}. Cause: ${capProviderText(failureText(cause), PROVIDER_TEXT_EXCERPT_CHARS)}`,
+      { ...commandDetails(cause, context), next_step: answer.nextStep },
+      cause,
+    );
+  }
 
   const observed = providerSnapshot(cause);
   const requestFailure =
