@@ -199,11 +199,17 @@ describe('Deploy lifecycle', () => {
       provider_uuid: string;
       provider_url: string;
       state: LeaseState;
-    }>('deploy_app', {
-      image: 'nginxinc/nginx-unprivileged:alpine',
-      port: 8080,
-      size: 'docker-micro',
-    });
+    }>(
+      'deploy_app',
+      {
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        port: 8080,
+        size: 'docker-micro',
+        // Tool deadline < MCP request timeout < vitest test timeout (ENG-661).
+        timeout_seconds: 90,
+      },
+      { timeoutMs: 120_000 },
+    );
 
     expect(result.lease_uuid).toBeTruthy();
     expect(result.provider_uuid).toBeTruthy();

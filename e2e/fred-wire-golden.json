@@ -91,10 +91,10 @@
   },
 
   "live_observations": {
-    "fred_ref": "4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234",
-    "mono_ref": "ebfdf619387935c8c0a74d4b13f96cd5279da013",
-    "run_url": "https://github.com/manifest-network/manifest-mcp-mono/actions/runs/35370613452",
-    "scope": "Healthy ACTIVE status, release, and diagnostics projection keys observed in live lifecycle tests. Conditional-field allowlists retain their original baseline provenance. This successful run also verified SDK deployment, maintenance replay/conflict, retained-volume restore, and a devnet restart preserving existing storage and placement authority.",
+    "fred_ref": "8a263719d0a102f0347ddd39980bcdd67bb68fd2",
+    "mono_ref": "0a1f88f724c8f7840d5b6d5d66654284941094d8",
+    "run_url": "https://github.com/manifest-network/manifest-mcp-mono/actions/runs/36882416092",
+    "scope": "Healthy ACTIVE status, release, and diagnostics projection keys observed in the full nightly E2E suite's live lifecycle tests (PR240 leg, Fred main after PRs #242 and #243). The key sets are unchanged from the earlier 4f00091 observation. Conditional-field allowlists retain their original baseline provenance. The same run's devnet restart step preserved existing storage and placement authority.",
     "status": [
       "lease_uuid",
       "meta_hash_hex",

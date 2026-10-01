@@ -221,11 +221,18 @@ describe('Billing custom-domain', () => {
     const result = await fredClient.callTool<{
       lease_uuid: string;
       state: LeaseState;
-    }>('deploy_app', {
-      image: 'nginxinc/nginx-unprivileged:alpine',
-      port: 8080,
-      size: 'docker-micro',
-    });
+    }>(
+      'deploy_app',
+      {
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        port: 8080,
+        size: 'docker-micro',
+        // Keep tool deadline < MCP request timeout < vitest test timeout, so
+        // a stalled provision reports fred's diagnostic (ENG-661).
+        timeout_seconds: 90,
+      },
+      { timeoutMs: 120_000 },
+    );
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     expect(result.lease_uuid).toBeTruthy();
     leaseUuid = result.lease_uuid;
@@ -494,12 +501,19 @@ describe('Billing custom-domain', () => {
         state: LeaseState;
         custom_domain?: string;
         service_name?: string;
-      }>('deploy_app', {
-        image: 'nginxinc/nginx-unprivileged:alpine',
-        port: 8080,
-        size: 'docker-micro',
-        custom_domain: MIXED_CASE_FQDN_VIA_DEPLOY,
-      });
+      }>(
+        'deploy_app',
+        {
+          image: 'nginxinc/nginx-unprivileged:alpine',
+          port: 8080,
+          size: 'docker-micro',
+          custom_domain: MIXED_CASE_FQDN_VIA_DEPLOY,
+          // A custom-domain provision that never becomes ready (ENG-1055)
+          // must fail with fred's diagnostic, not an MCP request timeout.
+          timeout_seconds: 90,
+        },
+        { timeoutMs: 120_000 },
+      );
       expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
       expect(result.custom_domain).toBe(FQDN_VIA_DEPLOY);
       // 1-item legacy lease (image+port) — service_name not echoed.
@@ -534,6 +548,9 @@ describe('Billing custom-domain', () => {
         port: 8080,
         size: 'docker-micro',
         custom_domain: FQDN_VIA_DEPLOY,
+        // Should fail before upload. If a regression reaches the readiness
+        // poll, stop it inside MCP's 60s default request timeout.
+        timeout_seconds: 30,
       });
       const orphanedLeaseUuid = await cleanupLeaseFromErrorDetails(
         err.details,

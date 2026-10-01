@@ -1,11 +1,23 @@
 # Fred PR #240 compatibility
 
-[ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepares this repository
-against immutable Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234`
-from [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule
-and generated manifest artifacts use that revision. Runtime clients continue
-defaulting to released Fred v0.13; PR240 behavior requires explicit opt-in.
-Revalidate the pin against Fred's final merged revision before rollout.
+[ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepared this repository
+against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
+[PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
+generated manifest artifacts now use Fred `main`
+`8a263719d0a102f0347ddd39980bcdd67bb68fd2`. It adds
+[PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
+[ENG-1055](https://linear.app/liftedinit/issue/ENG-1055), and
+[PR #243](https://github.com/manifest-network/fred/pull/243) to PR #240's merge.
+Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
+requires explicit opt-in. Revalidate against Fred's released revision before
+rollout.
+
+PR #243 adds tenant `410` answers with a `reason`: `backend_storage_lost` for a
+lease whose backend an operator retired as lost, and `maintenance_expired` for a
+restart or update older than the lease's retained maintenance history. A lost
+lease's `/status` instead reports `provision_status: failed` with the failure
+reason `BackendStorageLost`. Mono treats `reason` as an open string and surfaces
+these as provider errors.
 
 ## Client changes
 
@@ -69,6 +81,20 @@ initializers never reseal partial or existing authority. Follow
 [local E2E setup](e2e-setup.md) for fresh setup or a complete disposable reset;
 existing v0.13 data requires Fred's upstream stopped-upgrade procedure.
 
+At the PR #242 pin, a restart or update can overlap admitted lifecycle work
+whose outcome is not yet journaled: a maintenance just after Ready, a not yet
+journaled close, or a pending provision or restore. Fred then answers `503` and
+keeps the command
+pending, where it previously refused it with `409 invalid state`. A command that
+overlaps a journaled but undelivered completion still receives
+`409 invalid state`. Fred's tenant `503` body is generic, so the devnet
+maintenance harness retries only Fred's own `503` body for the same command
+key, within a bounded budget, and rethrows the final answer unchanged. Fred
+deduplicates the command, and its own recovery may already have applied it. An
+update now remains pending until its signed completion callback succeeds. A new
+command in that interval receives `409` "already undergoing a lifecycle
+operation".
+
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.
 
@@ -92,7 +118,10 @@ runs the full E2E suite against both. Live OPTIONS checks verify that the select
 maintenance headers fit each provider's CORS policy; these are not a browser run.
 
 `e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
-actual status/release observations against the new pin. The diagnostics
+the latest live status/release observation. That observation records its Fred
+revision and run; it now comes from the green nightly run at Fred `main`
+`8a26371`, whose key sets matched the earlier `4f00091` observation. Replace it
+only from a green live run at a newer pin. The diagnostics
 projection records `lease_state` as a required field derived by mono. Conditional
 fields not seen in a healthy run retain their baseline provenance; do not invent
 observations from Go source. Local unit and bootstrap-script tests do not

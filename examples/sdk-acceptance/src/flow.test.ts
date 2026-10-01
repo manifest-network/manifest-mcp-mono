@@ -473,4 +473,45 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
       expect(client.dispose).toHaveBeenCalledTimes(1);
     },
   );
+
+  it.each(['restart', 'update'] as const)(
+    'rejoins a pending %s with its original command key',
+    async (operation) => {
+      vi.useFakeTimers();
+      try {
+        const client = buildFakeClient({ onSubscribeComplete: 'active' });
+        h.createFredClient.mockResolvedValue(client);
+        const body = { error: 'service temporarily unavailable', code: 503 };
+        const command = operation === 'restart' ? h.restartApp : h.updateApp;
+        command.mockRejectedValueOnce(
+          Object.assign(new Error(`Unknown. Cause: ${JSON.stringify(body)}`), {
+            code: `${operation.toUpperCase()}_INDETERMINATE`,
+            details: {
+              provider_status: 503,
+              provider_error_kind: 'http',
+              idempotency_key: 'test-command-key',
+              operation,
+              outcome: 'unknown',
+            },
+          }),
+        );
+
+        const flow = runAcceptanceFlow({ ...baseOpts(), variant: 'single' });
+        await vi.runAllTimersAsync();
+        await flow;
+
+        expect(command.mock.calls.map(([, , o]) => o.idempotencyKey)).toEqual([
+          'test-command-key',
+          'test-command-key',
+        ]);
+        // One key per logical command; a pending retry never mints another.
+        expect(h.createMaintenanceIdempotencyKey).toHaveBeenCalledTimes(2);
+        // Pending work may change status/history, so it is not reconciled.
+        expect(h.getLeaseStatus).not.toHaveBeenCalled();
+        expect(client.stopApp).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 });
