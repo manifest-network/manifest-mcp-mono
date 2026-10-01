@@ -68,6 +68,17 @@ describe('FRED_REASON_GUIDANCE', () => {
     expect(lost.mayBeHistorical).toBeUndefined();
   });
 
+  it('never claims a lease with lost storage is already closed on chain', () => {
+    // Fred serves this reason while the lease is still ACTIVE, and its reconciler
+    // can defer the chain close (lost_lease_test.go, DEPLOYMENT.md), so the row
+    // must send the reader to the actual chain state.
+    const lost = FRED_REASON_GUIDANCE.BackendStorageLost;
+    expect(lost.explanation).not.toMatch(/closed on chain/);
+    expect(lost.explanation).toContain('later reconciliation sweep');
+    expect(lost.explanation).toContain('app_status chainState');
+    expect(lost.nextStep).toContain('close_lease');
+  });
+
   it('flags ImagePullFailed as possibly historical (a failed update keeps the previous release)', () => {
     // Fred PR #242 checks image admission before replacing any container, and a
     // ready lease keeps the failed attempt's reason.

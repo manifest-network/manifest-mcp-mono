@@ -1161,7 +1161,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         const lost = FRED_REASON_GUIDANCE.BackendStorageLost;
         throw new ManifestMCPError(
           ManifestMCPErrorCode.QUERY_FAILED,
-          `The provider has no diagnostics for lease ${leaseUuid}. ${lost.explanation} ${lost.nextStep}`,
+          `The provider has no diagnostics for lease ${leaseUuid} (chain state ${leaseStateToJSON(lease.state)}). ${lost.explanation} ${lost.nextStep}`,
           {
             lease_uuid: leaseUuid,
             lease_state: leaseStateToJSON(lease.state),

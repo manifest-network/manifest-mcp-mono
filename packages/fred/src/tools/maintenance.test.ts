@@ -537,9 +537,14 @@ describe.each(operations)(
       });
       expect(error.message).toContain('irrecoverably lost');
       expect(error.message).not.toContain('reuse this key');
+      // Fred ends the lease on chain only in a later sweep, and this command
+      // reached it on a lease the chain still reported ACTIVE.
+      expect(error.message).toContain('later reconciliation sweep');
+      expect(error.message).not.toMatch(/closes the lease on chain/);
       expect(error.details.next_step).toContain(
         'Do not retry restart, update, or restore',
       );
+      expect(error.details.next_step).toContain('close_lease');
       expect(isRetryableError(error)).toBe(false);
       expect(wire.calls).toHaveLength(1);
     });

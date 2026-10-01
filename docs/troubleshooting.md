@@ -207,7 +207,7 @@ surface it on `message`, so either provider generation gives you a usable diagno
 | `RestoreFailed` | A restore from retained data did not complete | you |
 | `VolumeCleanupExhausted` | Volume cleanup failed after every retry | provider |
 | `CleanupFailed` | Container/volume cleanup on deprovision failed | provider |
-| `BackendStorageLost` | The provider irrecoverably lost the storage holding the lease (Fred PR #243); the app and its data on that provider are gone and the lease is closed on chain | nobody for this lease: deploy a new one and restore data from your own backups |
+| `BackendStorageLost` | The provider irrecoverably lost the storage holding the lease (Fred PR #243); the app and its data on that provider are gone. The provider ends the lease on chain only in a later sweep, so it can still be ACTIVE and billing: check `app_status` `chainState` | nobody can recover this lease: deploy a new one and restore data from your own backups; you can `close_lease` a lease that is still ACTIVE yourself |
 | `Unknown` | Marked failed with no specific cause recorded | you |
 
 Two things to keep in mind:
@@ -222,12 +222,15 @@ Two things to keep in mind:
 - **A lost backend is final.** For a `BackendStorageLost` lease, `app_status` reports the reason.
   `app_diagnostics` reports the provider's `410 backend_storage_lost` with a `next_step`, and a
   `restore_app` naming the lease as the source refuses it as `RESTORE_NOT_RETAINED` before
-  creating anything. The provider closes the lease on chain, after which `get_logs`,
-  `app_releases`, `restart_app`, and `update_app` refuse it as inactive. Before the close lands,
-  the provider answers them with the same `410`; the maintenance tools report it with a
-  `next_step`, and `get_logs` and `app_releases` return the provider's body. Fred gives these
-  answers only until the lease has ended and a later sweep prunes its placement record; it then
-  answers like any other ended lease and no longer reports the cause.
+  creating anything. The provider's reconciler ends the lease on chain only in a later sweep, and
+  an untrusted report of the lease or pending inventory recovery can defer that, so read
+  `chainState` instead of assuming the lease has ended. While it is still ACTIVE it may still be
+  billing (you can close it yourself with `close_lease`), and the provider answers `get_logs`,
+  `app_releases`, `restart_app`, and `update_app` with the same `410`: the maintenance tools report
+  it with a `next_step`, and `get_logs` and `app_releases` return the provider's body. Once the
+  lease has ended, those tools refuse it as inactive. Fred gives these answers only until the
+  lease has ended and a later sweep prunes its placement record; it then answers like any other
+  ended lease and no longer reports the cause.
 
 ## Auth token rejected by the provider
 

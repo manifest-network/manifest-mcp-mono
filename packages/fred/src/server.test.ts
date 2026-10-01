@@ -701,43 +701,56 @@ describe('FredMCPServer', () => {
       expect(mockGetLeaseProvision).not.toHaveBeenCalled();
     });
 
-    it('turns Fred PR #243 storage loss into its cause and next step, without inventing a fail_count', async () => {
-      mockFetchLease.mockResolvedValue({
-        providerUuid: 'prov-1',
-        state: LeaseState.LEASE_STATE_CLOSED,
-      } as Awaited<ReturnType<typeof fetchLease>>);
-      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
-      mockGetLeaseProvision.mockRejectedValue(
-        new ProviderApiError(
-          BACKEND_STORAGE_LOST.status,
-          BACKEND_STORAGE_LOST.text,
-          { kind: 'http' },
-        ),
-      );
+    // Fred reports storage loss while the lease is still ACTIVE (its
+    // lost_lease_test) and ends it on chain only in a later sweep.
+    it.each([
+      ['LEASE_STATE_ACTIVE', LeaseState.LEASE_STATE_ACTIVE],
+      ['LEASE_STATE_CLOSED', LeaseState.LEASE_STATE_CLOSED],
+    ] as const)(
+      'turns Fred PR #243 storage loss into its cause and next step, without inventing a fail_count (%s)',
+      async (stateName, state) => {
+        mockFetchLease.mockResolvedValue({
+          providerUuid: 'prov-1',
+          state,
+        } as Awaited<ReturnType<typeof fetchLease>>);
+        mockResolveProviderUrl.mockResolvedValue(
+          'https://provider.example.com',
+        );
+        mockGetLeaseProvision.mockRejectedValue(
+          new ProviderApiError(
+            BACKEND_STORAGE_LOST.status,
+            BACKEND_STORAGE_LOST.text,
+            { kind: 'http' },
+          ),
+        );
 
-      const server = new FredMCPServer({
-        config: makeMockConfig(),
-        walletProvider: makeMockWallet({ signArbitrary: true }),
-      });
-      const result = await callTool(server, 'app_diagnostics', {
-        lease_uuid: LEASE_UUID,
-      });
+        const server = new FredMCPServer({
+          config: makeMockConfig(),
+          walletProvider: makeMockWallet({ signArbitrary: true }),
+        });
+        const result = await callTool(server, 'app_diagnostics', {
+          lease_uuid: LEASE_UUID,
+        });
 
-      expect(result.isError).toBe(true);
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('QUERY_FAILED');
-      expect(parsed.message).toContain('irrecoverably lost');
-      expect(parsed.details).toMatchObject({
-        lease_uuid: LEASE_UUID,
-        lease_state: 'LEASE_STATE_CLOSED',
-        provider_status: 410,
-        provider_reason: 'backend_storage_lost',
-        reason: 'BackendStorageLost',
-      });
-      expect(parsed.details.next_step).toContain('No tenant action exists');
-      expect(parsed.details.next_step).toContain('deploy_app');
-      expect(parsed.details).not.toHaveProperty('fail_count');
-    });
+        expect(result.isError).toBe(true);
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.code).toBe('QUERY_FAILED');
+        expect(parsed.message).toContain('irrecoverably lost');
+        // The observed chain state, never an assumed closure.
+        expect(parsed.message).toContain(`(chain state ${stateName})`);
+        expect(parsed.message).not.toMatch(/closed on chain/);
+        expect(parsed.details).toMatchObject({
+          lease_uuid: LEASE_UUID,
+          lease_state: stateName,
+          provider_status: 410,
+          provider_reason: 'backend_storage_lost',
+          reason: 'BackendStorageLost',
+        });
+        expect(parsed.details.next_step).toContain('No tenant action exists');
+        expect(parsed.details.next_step).toContain('deploy_app');
+        expect(parsed.details).not.toHaveProperty('fail_count');
+      },
+    );
 
     it('keeps any other provider refusal as the provider error', async () => {
       mockFetchLease.mockResolvedValue({
@@ -1280,6 +1293,9 @@ describe('FredMCPServer', () => {
       // the maintenance tools that cannot reach it.
       expect(text).toContain('BackendStorageLost');
       expect(text).toContain('Do not suggest restart, update, or restore');
+      // Fred can report it while the lease is still ACTIVE on chain.
+      expect(text).toContain('instead of assuming the lease is closed');
+      expect(text).not.toMatch(/lease is closed on chain/);
       expect(text).not.toContain(
         'record provision_status, fail_count, and last_error',
       );

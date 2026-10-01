@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **fred, sdk:** recognize `BackendStorageLost`, the failure reason Fred PR #243 reports for a lease whose backend an operator retired because its storage was irrecoverably lost. `FRED_FAILURE_REASONS` and `FRED_REASON_GUIDANCE` gain it as a provider-side row: nothing recovers the lease or its data, so the guidance points to a new deployment. `app_diagnostics` and the restore pre-flight turn the provider's `410 backend_storage_lost` into a typed error (`QUERY_FAILED` and `RESTORE_NOT_RETAINED`) with that guidance, without inventing a `fail_count`; the restore pre-flight still creates no lease. The `diagnose-failing-app` prompt says not to suggest restart, update, or restore for it.
+- **fred, sdk:** recognize `BackendStorageLost`, the failure reason Fred PR #243 reports for a lease whose backend an operator retired because its storage was irrecoverably lost. `FRED_FAILURE_REASONS` and `FRED_REASON_GUIDANCE` gain it as a provider-side row: nothing recovers the lease or its data, so the guidance points to a new deployment. `app_diagnostics` and the restore pre-flight turn the provider's `410 backend_storage_lost` into a typed error (`QUERY_FAILED` and `RESTORE_NOT_RETAINED`) with that guidance, without inventing a `fail_count`; the restore pre-flight still creates no lease. The `diagnose-failing-app` prompt says not to suggest restart, update, or restore for it. Fred can report this reason while the lease is still ACTIVE and ends it on chain only in a later reconciliation sweep, so the guidance points to the lease's actual chain state and mentions closing a still-ACTIVE lease, which may still be billing.
 
 ### Changed
 

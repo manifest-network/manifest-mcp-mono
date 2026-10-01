@@ -183,9 +183,9 @@ function definitiveAnswer(
   }
   if (status === 410 && reason === 'backend_storage_lost') {
     return {
-      summary: `The provider irrecoverably lost the storage holding lease ${leaseUuid}: the app and its data on this provider are gone, the provider closes the lease on chain, and the ${operation} did not run.`,
+      summary: `The provider irrecoverably lost the storage holding lease ${leaseUuid}: the app and its data on this provider are gone, and the ${operation} did not run. The provider ends the lease on chain only in a later reconciliation sweep, so it can still be ACTIVE and billing.`,
       nextStep:
-        'Do not retry restart, update, or restore for this lease. Deploy a new lease and restore your data from your own backups.',
+        'Do not retry restart, update, or restore for this lease. Deploy a new lease and restore your data from your own backups. While app_status still shows this lease ACTIVE, you can close it with close_lease (manifest-mcp-lease) instead of waiting for the provider.',
     };
   }
   if (status === 429 && reason === 'maintenance_capacity_reserved') {

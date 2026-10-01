@@ -108,11 +108,13 @@ export const FRED_REASON_GUIDANCE: Readonly<
   },
   BackendStorageLost: {
     explanation:
-      "The provider operator retired this lease's backend because its storage was irrecoverably lost (Fred PR #243). The app and its data on that provider are gone, and the provider ends the lease on chain.",
+      "The provider operator retired this lease's backend because its storage was irrecoverably lost (Fred PR #243). The app and its data on that provider are gone. The provider ends the lease on chain only in a later reconciliation sweep, so it can still be ACTIVE and billing: check app_status chainState.",
     // Provider-side: nothing recovers this lease or its data. A fresh deployment
-    // is a new lease, not a retry, so the dead-end phrase still applies.
+    // is a new lease, not a retry, so the dead-end phrase still applies. Fred can
+    // report this reason while the lease is ACTIVE (its lost_lease_test), and its
+    // reconciler may defer the chain close, so closing is cleanup, not recovery.
     nextStep:
-      'No tenant action exists to recover this lease or its data: restart_app, update_app, and restore_app all fail for it. Deploy a fresh lease with deploy_app and restore your data from your own backups.',
+      'No tenant action exists to recover this lease or its data: restart_app, update_app, and restore_app all fail for it. Deploy a fresh lease with deploy_app and restore your data from your own backups. While app_status still shows this lease ACTIVE, you can close it with close_lease (manifest-mcp-lease) instead of waiting for the provider.',
     actor: 'provider',
   },
   Unknown: {
