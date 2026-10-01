@@ -3,13 +3,20 @@
 [ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepared this repository
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
-generated manifest artifacts now use `23e5628ab7e64c3301b70455c06d06a2028fd1ce`,
-the head of [PR #242](https://github.com/manifest-network/fred/pull/242). That
-revision builds on PR #240's merge into `main` and fixes
-[ENG-1055](https://linear.app/liftedinit/issue/ENG-1055). Runtime clients
-continue defaulting to released Fred v0.13; PR240 behavior requires explicit
-opt-in. Re-pin to PR #242's merge commit, then revalidate against Fred's final
-merged revision before rollout.
+generated manifest artifacts now use Fred `main`
+`8a263719d0a102f0347ddd39980bcdd67bb68fd2`. It adds
+[PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
+[ENG-1055](https://linear.app/liftedinit/issue/ENG-1055), and
+[PR #243](https://github.com/manifest-network/fred/pull/243) to PR #240's merge.
+Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
+requires explicit opt-in. Revalidate against Fred's released revision before
+rollout.
+
+PR #243 adds tenant `410` answers with a `reason`: `backend_storage_lost` for a
+lease whose backend an operator retired as lost (its status reports
+`provision_status: failed` with that reason), and `maintenance_expired` for a
+restart or update older than the lease's retained maintenance history. Mono
+treats `reason` as an open string and surfaces both as provider errors.
 
 ## Client changes
 
