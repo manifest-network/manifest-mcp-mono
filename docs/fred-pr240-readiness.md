@@ -166,8 +166,9 @@ maintenance headers fit each provider's CORS policy; these are not a browser run
 
 `e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
 the latest live status/release observation. That observation records its Fred
-revision and run; it now comes from the green nightly run at Fred `main`
-`8a26371`, whose key sets matched the earlier `4f00091` observation. Replace it
+revision and run; it now comes from the green full E2E run at Fred `main`
+`315ed5a`, whose key sets matched the earlier `8a26371` and `4f00091`
+observations. Replace it
 only from a green live run at a newer pin. The diagnostics
 projection records `lease_state` as a required field derived by mono. Conditional
 fields not seen in a healthy run retain their baseline provenance; do not invent
