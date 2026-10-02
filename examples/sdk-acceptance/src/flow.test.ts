@@ -152,7 +152,7 @@ function buildFakeClient(opts: { onSubscribeComplete?: 'active' | 'failure' }) {
         callLog.push('waitForLeaseStatus');
         return opts.onSubscribeComplete === 'failure'
           ? { state: LeaseState.LEASE_STATE_CLOSED }
-          : { state: LeaseState.LEASE_STATE_ACTIVE };
+          : { state: LeaseState.LEASE_STATE_ACTIVE, provision_status: 'ready' };
       },
     ),
     dispose: vi.fn(() => {
