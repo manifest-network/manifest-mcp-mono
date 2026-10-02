@@ -150,7 +150,10 @@ describe('createFredClient', () => {
       },
     }) as unknown as ManifestQueryClient;
     const statusFetch = vi.fn(async () => {
-      const body = JSON.stringify({ state: 'LEASE_STATE_ACTIVE' }); // terminal-success
+      const body = JSON.stringify({
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: 'ready',
+      }); // terminal-success
       return {
         ok: true,
         status: 200,

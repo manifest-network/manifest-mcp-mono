@@ -286,7 +286,7 @@ try {
 }
 ```
 
-> **Readiness deadlines.** `pollLeaseUntilReady` defaults to `DEFAULT_POLL_TIMEOUT_MS` (10 minutes) — what the provider is actually allowed to take, including a 5-minute cold image pull. Override per call with `pollOptions.timeoutMs` (`deployApp`) or `timeoutMs` (`waitForAppReady`). Reaching the deadline throws `LeaseReadinessUnconfirmedError` (a `ProviderApiError` subclass, `reason: 'deadline' | 'provider_unreachable'`) — which means *readiness was never confirmed*, not that the deployment failed.
+> **Readiness deadlines.** `pollLeaseUntilReady` defaults to `DEFAULT_POLL_TIMEOUT_MS` (10 minutes) — what the provider is actually allowed to take, including a 5-minute cold image pull. Override per call with `pollOptions.timeoutMs` (`deployApp`) or `timeoutMs` (`waitForAppReady`). Reaching the deadline throws `LeaseReadinessUnconfirmedError` (a `ProviderApiError` subclass, `reason: 'deadline' | 'provider_unreachable'`) — which means *readiness was never confirmed*, not that the deployment failed. Only `provision_status: 'ready'` on an ACTIVE lease confirms readiness. An ACTIVE lease without any `provision_status` keeps the wait going: every Fred release reports the field whenever the lease's backend answers, so its absence means the provider could not read that backend (unreachable, fenced by its operator, or holding no record). A deadline reached that way says so in its message.
 
 > **Escape hatch.** The same `deployApp` is also exported as a free `fn(ctx, spec, opts)` from `/deploy` for advanced composition. A consumer that already holds a `FredClient` can pass it directly (the client *is* a `FredAuthCtx`); a client-less consumer builds the `providerAuth` port from a bare `Signer` via `createProviderAuth(signer, { chainId })`, then assembles a `FredAuthCtx` from it plus `query`/`chain`/`fetch`/`logger`. `createProviderAuth` and the `FredAuthCtx` / `FredReadCtx` / `ProviderAuthPort` types are all re-exported from `/deploy`. Prefer the bound `client.deployApp` for everyday use.
 
@@ -372,7 +372,7 @@ It runs as a saga — pre-flight retained-check → create a new lease → `POST
 
 ## Watching live status
 
-`waitForLeaseStatus` watches the provider until the lease reaches a **terminal** state, then resolves with the final status (a converging wait — the viem `waitFor*` / cosmjs `signAndBroadcast` shape). It resolves for a *failure* terminal too; check with `isLeaseFailureTerminal`, and reject/observe as you wish. Aborting the `signal` rejects the promise.
+`waitForLeaseStatus` watches the provider until the lease reaches a **terminal** state, then resolves with the final status (a converging wait — the viem `waitFor*` / cosmjs `signAndBroadcast` shape). It resolves for a *failure* terminal too; check with `isLeaseFailureTerminal`, and reject/observe as you wish. An ACTIVE lease is a success terminal only with `provision_status: 'ready'`; without any `provision_status` the wait continues, as `pollLeaseUntilReady` does. Aborting the `signal` rejects the promise.
 
 Readiness is an **allowlist**: only a provider-reported `ready` (or a provider that reports no provision status at all) resolves as success. A status this client does not recognize — including one added by a newer provider — keeps the wait running rather than being reported as a healthy deploy, and the deadline rejection names the last status seen.
 
