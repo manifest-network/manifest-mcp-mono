@@ -4,10 +4,12 @@
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
 generated manifest artifacts now use Fred `main`
-`8a263719d0a102f0347ddd39980bcdd67bb68fd2`. It adds
+`315ed5a3f4a7214c78a7b16bb179c513e5aa9eef`. It adds
 [PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
-[ENG-1055](https://linear.app/liftedinit/issue/ENG-1055), and
-[PR #243](https://github.com/manifest-network/fred/pull/243) to PR #240's merge.
+[ENG-1055](https://linear.app/liftedinit/issue/ENG-1055),
+[PR #243](https://github.com/manifest-network/fred/pull/243), and the operator
+controls of [PR #244](https://github.com/manifest-network/fred/pull/244) and
+[PR #245](https://github.com/manifest-network/fred/pull/245) to PR #240's merge.
 Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
 requires explicit opt-in. Revalidate against Fred's released revision before
 rollout.
@@ -94,6 +96,17 @@ deduplicates the command, and its own recovery may already have applied it. An
 update now remains pending until its signed completion callback succeeds. A new
 command in that interval receives `409` "already undergoing a lifecycle
 operation".
+
+PR #244 and PR #245 add operator controls that need no client change: rolling
+HMAC key rotation, online placement snapshots, a `placement-repair` generation
+adoption mode, and `backends[].fenced`. Leases on a fenced backend keep their
+placement and wait. Their restart, update and restore answer Fred's generic
+`503` before anything is journaled, which mono reports as the usual uncertain
+outcome; an exact retry keeps receiving `503` until the operator lifts the
+fence. Reads fail closed: `/provision` answers `500`, and `/status` omits
+`provision_status`, exactly as for any backend Fred cannot read. The devnet
+configures no fence and keeps its legacy shared `callback_secret`, so the new
+per-backend key rules do not apply to it.
 
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.
