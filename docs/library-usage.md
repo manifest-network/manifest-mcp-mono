@@ -374,7 +374,7 @@ It runs as a saga — pre-flight retained-check → create a new lease → `POST
 
 `waitForLeaseStatus` watches the provider until the lease reaches a **terminal** state, then resolves with the final status (a converging wait — the viem `waitFor*` / cosmjs `signAndBroadcast` shape). It resolves for a *failure* terminal too; check with `isLeaseFailureTerminal`, and reject/observe as you wish. An ACTIVE lease is a success terminal only with `provision_status: 'ready'`; without any `provision_status` the wait continues, as `pollLeaseUntilReady` does. Aborting the `signal` rejects the promise.
 
-Readiness is an **allowlist**: only a provider-reported `ready` (or a provider that reports no provision status at all) resolves as success. A status this client does not recognize — including one added by a newer provider — keeps the wait running rather than being reported as a healthy deploy, and the deadline rejection names the last status seen.
+Readiness is an **allowlist**: only a provider-reported `ready` on an ACTIVE lease resolves as success. A status this client does not recognize — including one added by a newer provider — keeps the wait running rather than being reported as a healthy deploy, and the deadline rejection names the last status seen.
 
 One terminal deserves a different response from the rest. A **retained** lease has been torn down with its volumes kept: the deployment is gone and the lease is closed, but the data can be recovered — onto a *fresh* lease, never this one — until `retained_until` passes.
 
