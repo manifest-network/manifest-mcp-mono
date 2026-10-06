@@ -19,6 +19,7 @@ export const FRED_FAILURE_REASONS = [
   'RestoreFailed',
   'VolumeCleanupExhausted',
   'CleanupFailed',
+  'BackendStorageLost',
   'Unknown',
 ] as const;
 

@@ -19,6 +19,7 @@ import {
   PROVIDER_TEXT_EXCERPT_CHARS,
   ProviderApiError,
 } from '../http/provider.js';
+import { isBackendStorageLost } from '../http/provider-error-reason.js';
 import { resolveFredSignal } from './call-signal.js';
 import { createLease } from './createLease.js';
 import { fetchLease } from './fetchLease.js';
@@ -72,7 +73,20 @@ export async function restoreApp(
     sourceToken,
     ctx.fetch,
     ctx.allowLoopback,
-  );
+  ).catch((err: unknown) => {
+    // Fred PR #243: an operator retired the source's backend as lost. Nothing
+    // was created yet, so this is a definitive pre-flight refusal.
+    if (!isBackendStorageLost(err)) throw err;
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.RESTORE_NOT_RETAINED,
+      `Lease "${sourceLeaseUuid}" has no restorable retained data: the provider irrecoverably lost the storage holding it. No lease was created. Deploy a new lease and restore your data from your own backups.`,
+      {
+        source_lease_uuid: sourceLeaseUuid,
+        provider_status: 410,
+        provider_reason: 'backend_storage_lost',
+      },
+    );
+  });
   if (provision.status !== 'retained') {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.RESTORE_NOT_RETAINED,
