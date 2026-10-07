@@ -219,10 +219,12 @@ Keep in mind:
 - **The set is open and add-only.** A provider running a newer Fred may return a `reason` not listed
   here. That is expected, not an error: treat it as a generic failure and read `message`. The tools
   pass unknown values through untouched and simply omit `next_step`.
-- **`fail_count` never decides a close.** It is a lifetime diagnostic. On a provider running Fred
-  PR #252 or later, `terminal_budget` carries the decision: `verdict: exhausted` means the provider
-  will close the lease for repeated failures of the workload itself (at least three in a row over
-  at least 30 minutes), and `retry` means it re-provisions.
+- **What decides a close depends on the provider.** On a provider running Fred PR #252 or later,
+  `terminal_budget` decides: `verdict: exhausted` means the provider will close the lease for
+  repeated failures of the workload itself (at least three in a row over at least 30 minutes),
+  `retry` means it re-provisions, and `fail_count` is only a lifetime count. Without
+  `terminal_budget`, do not assume the lease is safe: a Fred v0.13 provider closes a failed ACTIVE
+  lease once `fail_count` reaches its reprovision limit (3 by default).
 - **A non-empty `reason` does not mean the app is down.** Fred keeps the attribution on a healthy
   lease whose last update rolled back, so a `ready` app can legitimately report
   `reason: UpdateFailed` or `ImagePullFailed`. Decide liveness from `provision_status`, not from the
