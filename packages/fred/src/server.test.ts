@@ -556,6 +556,65 @@ describe('FredMCPServer', () => {
       expect(sc.next_step).toBeUndefined();
     });
 
+    it('surfaces the Fred PR #252 terminal_budget with a sanitized verdict', async () => {
+      mockFetchLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockResolvedValue({
+        status: 'failed',
+        fail_count: 7,
+        reason: 'ContainerExited',
+        message: 'container exited unexpectedly',
+        terminal_budget: {
+          // RIGHT-TO-LEFT OVERRIDE (U+202E), written as an escape.
+          verdict: `exhausted${String.fromCharCode(0x202e)}`,
+          consecutive_failures: 3,
+        },
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      // isError undefined also proves the outputSchema accepts the new key.
+      expect(result.isError).toBeUndefined();
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect(sc.terminal_budget).toEqual({
+        verdict: 'exhausted',
+        consecutive_failures: 3,
+      });
+      expect(sc.fail_count).toBe(7);
+    });
+
+    it('omits terminal_budget when the provider reports none', async () => {
+      mockFetchLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockResolvedValue({
+        status: 'ready',
+        fail_count: 0,
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).not.toHaveProperty('terminal_budget');
+    });
+
     it('surfaces reason/message/next_step from a post-ENG-508 provider', async () => {
       mockFetchLease.mockResolvedValue({
         providerUuid: 'prov-1',

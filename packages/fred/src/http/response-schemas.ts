@@ -141,6 +141,17 @@ const FredLeaseItemSchema = z
   })
   .transform(trackValidationDrops);
 
+/** A backend's consecutive-failure budget (Fred PR #252, ENG-799). */
+const FredTerminalBudgetSchema = z
+  .looseObject({
+    verdict: z.string(),
+    consecutive_failures: NonNegativeIntegerSchema,
+  })
+  .transform(trackValidationDrops);
+const OptionalTerminalBudgetSchema = optionalOrUndefined(
+  FredTerminalBudgetSchema,
+);
+
 /** Raw `/status` response before its string state is converted to `LeaseState`. */
 export const RawLeaseStatusResponseSchema = z
   .looseObject({
@@ -154,6 +165,7 @@ export const RawLeaseStatusResponseSchema = z
     message: OptionalStringSchema,
     last_error: OptionalStringSchema,
     fail_count: OptionalNonNegativeIntegerSchema,
+    terminal_budget: OptionalTerminalBudgetSchema,
     created_at: OptionalStringSchema,
     services: optionalOrUndefined(filteredRecord(FredServiceStatusSchema)),
     retained_until: OptionalStringSchema,
@@ -208,6 +220,7 @@ export const FredLeaseProvisionResponseSchema = z
   .looseObject({
     status: z.string(),
     fail_count: NonNegativeIntegerSchema,
+    terminal_budget: OptionalTerminalBudgetSchema,
     reason: OptionalStringSchema,
     message: OptionalStringSchema,
     last_error: OptionalStringSchema,

@@ -135,6 +135,44 @@ describe('provider response schemas', () => {
     expect(hadValidationDrops(health)).toBe(true);
   });
 
+  it('validates the Fred PR #252 terminal_budget on status and provision', () => {
+    const budget = { verdict: 'retry', consecutive_failures: 0 };
+    const status = RawLeaseStatusResponseSchema.parse({
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'ready',
+      terminal_budget: budget,
+    });
+    const provision = FredLeaseProvisionResponseSchema.parse({
+      status: 'failed',
+      fail_count: 4,
+      terminal_budget: { verdict: 'exhausted', consecutive_failures: 3 },
+    });
+    expect(status.terminal_budget).toEqual(budget);
+    expect(provision.terminal_budget).toEqual({
+      verdict: 'exhausted',
+      consecutive_failures: 3,
+    });
+    expect(hadValidationDrops(status)).toBe(false);
+  });
+
+  it.each([
+    ['a negative count', { verdict: 'retry', consecutive_failures: -1 }],
+    ['a missing verdict', { consecutive_failures: 1 }],
+    ['a non-object', 'exhausted'],
+  ])(
+    'drops a terminal_budget with %s and keeps the response',
+    (_label, value) => {
+      const status = RawLeaseStatusResponseSchema.parse({
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: 'ready',
+        terminal_budget: value,
+      });
+      expect(status.terminal_budget).toBeUndefined();
+      expect(status.provision_status).toBe('ready');
+      expect(hadValidationDrops(status)).toBe(true);
+    },
+  );
+
   it('tracks log entries rejected by the tolerant map without changing its JSON shape', () => {
     const parsed = FredLeaseLogsResponseSchema.parse({
       ...identity,

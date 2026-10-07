@@ -8,6 +8,7 @@ import type {
   FredLeaseReleases,
   FredLeaseStatus,
   FredServiceStatus,
+  FredTerminalBudget,
 } from '@manifest-network/manifest-mcp-core';
 import {
   LeaseState,
@@ -74,6 +75,7 @@ export type {
   FredLeaseReleases,
   FredLeaseStatus,
   FredServiceStatus,
+  FredTerminalBudget,
 };
 
 export const MAX_TAIL = 1000;

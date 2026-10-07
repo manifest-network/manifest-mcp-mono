@@ -1093,7 +1093,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_diagnostics',
     {
       description:
-        'Get provision diagnostics for an existing app, including REJECTED, EXPIRED, and CLOSED leases when the provider still has a record. Returns the chain lease state separately from provider provision status, failure count, and failure attribution: a machine-readable reason, a human message, and a suggested next step. Missing or pruned provider records return an error; they do not imply zero failures. Older providers report last_error instead of reason/message.',
+        'Get provision diagnostics for an existing app, including REJECTED, EXPIRED, and CLOSED leases when the provider still has a record. Returns the chain lease state separately from provider provision status, failure count, and failure attribution: a machine-readable reason, a human message, and a suggested next step. Missing or pruned provider records return an error; they do not imply zero failures. Older providers report last_error instead of reason/message. Current providers also report terminal_budget: verdict "exhausted" means the provider will close the lease for repeated failures of the workload itself, "retry" that it re-provisions; fail_count is a lifetime count that never decides a close.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -1121,6 +1121,16 @@ export function registerTools(deps: RegisterToolsDeps): void {
         // Pre-ENG-508 providers only; superseded by reason/message. Kept
         // declared because the schema is downstream-visible.
         last_error: z.string().optional(),
+        // Fred PR #252 (ENG-799): the backend's consecutive-failure budget.
+        // `exhausted` means the provider will close the lease for repeated
+        // failure; `fail_count` is only a lifetime diagnostic. `verdict` is an
+        // open set, so it is a string, never an enum.
+        terminal_budget: z
+          .object({
+            verdict: z.string(),
+            consecutive_failures: z.number(),
+          })
+          .optional(),
         // Retention (ENG-600): present only when provision_status == "retained".
         retained_until: z.string().optional(),
         items: z.array(z.looseObject({})).optional(),
@@ -1195,6 +1205,16 @@ export function registerTools(deps: RegisterToolsDeps): void {
           lease_state: leaseStateToJSON(lease.state),
           provision_status: sanitizeForModelText(provision.status, 64),
           fail_count: provision.fail_count,
+          ...(provision.terminal_budget !== undefined && {
+            terminal_budget: {
+              verdict: sanitizeForModelText(
+                provision.terminal_budget.verdict,
+                32,
+              ),
+              consecutive_failures:
+                provision.terminal_budget.consecutive_failures,
+            },
+          }),
           ...sanitizeFailureFields(provision),
           ...(nextStep !== undefined ? { next_step: nextStep } : {}),
           ...sanitizeRetentionFields(provision),

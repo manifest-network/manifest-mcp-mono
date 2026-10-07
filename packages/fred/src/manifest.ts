@@ -339,6 +339,8 @@ const DURATION_UNIT_NANOSECONDS: Readonly<Record<string, bigint>> = {
 };
 const MAX_INT64 = (1n << 63n) - 1n;
 const MIN_INT64_MAGNITUDE = 1n << 63n;
+/** Docker's container.MinimumDuration, the floor Fred applies to health_check timings. */
+const HEALTH_CHECK_MINIMUM_NANOSECONDS = 1_000_000n;
 // Both signed int64 endpoints round to representable IEEE-754 values. Exact
 // raw-token admission is handled at the JSON wire boundary; these sentinels
 // keep the parsed-object validator from rejecting a valid endpoint solely
@@ -925,9 +927,22 @@ function validateService(
         );
       }
       for (const field of ['interval', 'timeout', 'start_period'] as const) {
-        if (field in hc && durationValueNanoseconds(hc[field]) === undefined) {
+        if (!(field in hc)) continue;
+        const nanoseconds = durationValueNanoseconds(hc[field]);
+        if (nanoseconds === undefined) {
           errors.push(
             `${scope}.health_check.${field}: must be a valid Go duration string or integer nanoseconds`,
+          );
+        } else if (
+          compatibility === 'pr240' &&
+          (nanoseconds < 0n ||
+            (nanoseconds > 0n &&
+              nanoseconds < HEALTH_CHECK_MINIMUM_NANOSECONDS))
+        ) {
+          // Fred PR #254 (ENG-1127) refuses what Docker would reject at container
+          // create. v0.13 admitted these; a negative value fell back to the default.
+          errors.push(
+            `${scope}.health_check.${field}: must be 0 (the default) or at least 1ms`,
           );
         }
       }

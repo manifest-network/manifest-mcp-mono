@@ -55,6 +55,7 @@
     "sometimes": [
       "meta_hash_hex",
       "fail_count",
+      "terminal_budget",
       "reason",
       "message",
       "retained_until",
@@ -79,6 +80,7 @@
     "observed_via": "app_diagnostics structuredContent (EXPLICIT projection — mono's contract, not Fred's; cannot detect a field Fred adds)",
     "always": ["lease_uuid", "lease_state", "provision_status", "fail_count"],
     "sometimes": [
+      "terminal_budget",
       "reason",
       "message",
       "last_error",
@@ -91,10 +93,10 @@
   },
 
   "live_observations": {
-    "fred_ref": "8a263719d0a102f0347ddd39980bcdd67bb68fd2",
-    "mono_ref": "0a1f88f724c8f7840d5b6d5d66654284941094d8",
-    "run_url": "https://github.com/manifest-network/manifest-mcp-mono/actions/runs/36882416092",
-    "scope": "Healthy ACTIVE status, release, and diagnostics projection keys observed in the full nightly E2E suite's live lifecycle tests (PR240 leg, Fred main after PRs #242 and #243). The key sets are unchanged from the earlier 4f00091 observation. Conditional-field allowlists retain their original baseline provenance. The same run's devnet restart step preserved existing storage and placement authority.",
+    "fred_ref": "9c063b4735124bd518e75cedf7db7b6dde0b131e",
+    "mono_ref": "e3fbf3d820d17fe9684d30fe7697e9e678501811",
+    "run_url": "https://github.com/manifest-network/manifest-mcp-mono/actions/runs/37629253815",
+    "scope": "Healthy ACTIVE status, release, and diagnostics projection keys observed in the full E2E suite's live lifecycle tests (PR240 leg, Fred main after PRs #242 through #257). Fred PR #252 adds terminal_budget to a healthy lease's status, and mono's diagnostics projection now carries it; it is recorded under `sometimes` because the v0.13 leg of the same run never sends it. The other key sets are unchanged from the earlier 315ed5a, 8a26371 and 4f00091 observations. Other conditional-field allowlists retain their original baseline provenance. The same run's devnet restart step preserved existing storage and placement authority on both legs.",
     "status": [
       "lease_uuid",
       "meta_hash_hex",
@@ -104,10 +106,17 @@
       "provisioning_started",
       "requires_payload",
       "state",
-      "tenant"
+      "tenant",
+      "terminal_budget"
     ],
     "release": ["created_at", "image", "manifest_bytes", "status", "version"],
-    "diagnostics_projection": ["fail_count", "lease_state", "lease_uuid", "provision_status"],
+    "diagnostics_projection": [
+      "fail_count",
+      "lease_state",
+      "lease_uuid",
+      "provision_status",
+      "terminal_budget"
+    ],
     "diagnostics_projection_note": "lease_state is always derived from chain state by mono, not added by Fred."
   }
 }

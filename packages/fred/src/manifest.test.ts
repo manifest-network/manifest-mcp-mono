@@ -1076,7 +1076,7 @@ describe('validateManifest', () => {
     );
 
     it.each(['0', '-5s', '5μs'])(
-      'accepts Go duration spelling %j even when the published schema does not',
+      'accepts Go duration %j in v0.13 mode, which admitted any parsed value',
       (interval) => {
         expect(
           validateManifest({
@@ -1086,6 +1086,42 @@ describe('validateManifest', () => {
         ).toBe(true);
       },
     );
+
+    // Fred PR #254 (ENG-1127): PR240 admission refuses negatives and any nonzero
+    // timing below Docker's 1ms minimum, in every field and spelling.
+    it.each<[string, string | number]>([
+      ['interval', '-5s'],
+      ['timeout', '5μs'],
+      ['start_period', '500us'],
+      ['interval', 999_999],
+      ['timeout', '0.5ms'],
+      ['start_period', -1],
+    ])('rejects PR240 health_check.%s %j', (field, value) => {
+      const result = validateManifest(
+        { image: 'nginx', health_check: { test: ['NONE'], [field]: value } },
+        'pr240',
+      );
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain(
+        `health_check.${field}: must be 0 (the default) or at least 1ms`,
+      );
+    });
+
+    it.each<[string, string | number]>([
+      ['interval', '0'],
+      ['timeout', 0],
+      ['start_period', '1ms'],
+      ['interval', 1_000_000],
+      ['timeout', '5000μs'],
+      ['start_period', '1m30s'],
+    ])('accepts PR240 health_check.%s %j', (field, value) => {
+      expect(
+        validateManifest(
+          { image: 'nginx', health_check: { test: ['NONE'], [field]: value } },
+          'pr240',
+        ).valid,
+      ).toBe(true);
+    });
 
     it('rejects a null duration because Duration.UnmarshalJSON rejects it', () => {
       expect(

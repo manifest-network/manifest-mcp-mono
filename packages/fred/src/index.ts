@@ -62,6 +62,7 @@ export {
   type FredLeaseReleases,
   type FredLeaseStatus,
   type FredServiceStatus,
+  type FredTerminalBudget,
   getLeaseLogs,
   getLeaseProvision,
   getLeaseReleases,

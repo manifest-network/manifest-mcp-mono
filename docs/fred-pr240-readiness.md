@@ -4,10 +4,13 @@
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
 generated manifest artifacts now use Fred `main`
-`8a263719d0a102f0347ddd39980bcdd67bb68fd2`. It adds
+`9c063b4735124bd518e75cedf7db7b6dde0b131e`. It adds
 [PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
-[ENG-1055](https://linear.app/liftedinit/issue/ENG-1055), and
-[PR #243](https://github.com/manifest-network/fred/pull/243) to PR #240's merge.
+[ENG-1055](https://linear.app/liftedinit/issue/ENG-1055),
+[PR #243](https://github.com/manifest-network/fred/pull/243), the operator
+controls of [PR #244](https://github.com/manifest-network/fred/pull/244) and
+[PR #245](https://github.com/manifest-network/fred/pull/245), and PRs #247
+through #257 to PR #240's merge.
 Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
 requires explicit opt-in. Revalidate against Fred's released revision before
 rollout.
@@ -129,6 +132,31 @@ update now remains pending until its signed completion callback succeeds. A new
 command in that interval receives `409` "already undergoing a lifecycle
 operation".
 
+PR #244 and PR #245 add operator controls that need no client change: rolling
+HMAC key rotation, online placement snapshots, a `placement-repair` generation
+adoption mode, and `backends[].fenced`. Leases on a fenced backend keep their
+placement and wait. Their restart, update and restore answer Fred's generic
+`503` before anything is journaled, which mono reports as the usual uncertain
+outcome; an exact retry keeps receiving `503` until the operator lifts the
+fence. Reads fail closed: `/provision` answers `500`, and `/status` omits
+`provision_status`, exactly as for any backend Fred cannot read. The devnet
+configures no fence and keeps its legacy shared `callback_secret`, so the new
+per-backend key rules do not apply to it.
+
+PRs #247 through #257 change four things a client sees. PR #254 bounds
+`health_check` timings at admission: a negative value, or one between 0 and
+Docker's 1ms minimum, is refused, and mono's `pr240` preflight now refuses the
+same. PR #252 closes an ACTIVE lease for repeated failure only when the backend
+reports an exhausted consecutive-failure budget. `/status` and `/provision`
+carry it as `terminal_budget`, which mono surfaces, and `fail_count` becomes a
+lifetime diagnostic. PR #255 fails a startup crash definitely instead of leaving
+the lease provisioning, with the new reasons `HealthCheckFailed` and
+`ContainerStartFailed`. PR #250 adds `VolumeDeletePending` and
+`VolumeDeletionInProgress` for held volume deletions. Mono has curated guidance
+for all four reasons. PR #251 runs tenant containers under a restricted seccomp
+profile, PR #257 fixes restart and update of leases adopted from v0.13, and PR
+#256 documents the existing token scope; none needs a client change.
+
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.
 
@@ -153,9 +181,11 @@ maintenance headers fit each provider's CORS policy; these are not a browser run
 
 `e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
 the latest live status/release observation. That observation records its Fred
-revision and run; it now comes from the green nightly run at Fred `main`
-`8a26371`, whose key sets matched the earlier `4f00091` observation. Replace it
-only from a green live run at a newer pin. The diagnostics
+revision and run; it now comes from the green full E2E run at Fred `main`
+`9c063b4`. Its status and diagnostics key sets add only `terminal_budget` to the
+earlier `315ed5a`, `8a26371` and `4f00091` observations. The golden lists that
+key as conditional, because the v0.13 leg never sends it. Replace the
+observation only from a green live run at a newer pin. The diagnostics
 projection records `lease_state` as a required field derived by mono. Conditional
 fields not seen in a healthy run retain their baseline provenance; do not invent
 observations from Go source. Local unit and bootstrap-script tests do not

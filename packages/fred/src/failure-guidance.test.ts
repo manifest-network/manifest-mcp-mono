@@ -79,6 +79,35 @@ describe('FRED_REASON_GUIDANCE', () => {
     expect(lost.nextStep).toContain('close_lease');
   });
 
+  it('treats the volume-deletion reasons as provider-side progress, never a tenant retry', () => {
+    // Fred PR #250 (ENG-1117): the tenant cannot hasten a held deletion.
+    for (const reason of [
+      'VolumeDeletePending',
+      'VolumeDeletionInProgress',
+    ] as const) {
+      expect(FRED_REASON_GUIDANCE[reason].actor, reason).toBe('provider');
+      expect(FRED_REASON_GUIDANCE[reason].nextStep, reason).toContain(
+        'No tenant action exists',
+      );
+    }
+  });
+
+  it('tells the tenant to fix startup failures that never count toward a close', () => {
+    // Fred PR #255 (ENG-1125): HealthCheckFailed and ContainerStartFailed never
+    // count toward the terminal budget, so an ACTIVE lease is re-provisioned
+    // and billed until the tenant acts.
+    for (const reason of [
+      'HealthCheckFailed',
+      'ContainerStartFailed',
+    ] as const) {
+      const row = FRED_REASON_GUIDANCE[reason];
+      expect(row.actor, reason).toBe('tenant');
+      expect(row.explanation, reason).toContain('billed');
+      expect(row.nextStep, reason).toContain('update_app');
+      expect(row.nextStep, reason).toContain('close_lease');
+    }
+  });
+
   it('flags ImagePullFailed as possibly historical (a failed update keeps the previous release)', () => {
     // Fred PR #242 checks image admission before replacing any container, and a
     // ready lease keeps the failed attempt's reason.
