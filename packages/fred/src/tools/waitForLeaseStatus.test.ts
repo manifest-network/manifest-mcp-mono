@@ -4,7 +4,11 @@ import type {
   EventTransport,
   LeaseUuid,
 } from '@manifest-network/manifest-mcp-core';
-import { LeaseState, noopLogger } from '@manifest-network/manifest-mcp-core';
+import {
+  LeaseState,
+  logger,
+  noopLogger,
+} from '@manifest-network/manifest-mcp-core';
 import { leaseStatusWire } from '@manifest-network/manifest-mcp-core/__test-utils__/fred-wire.js';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -85,11 +89,60 @@ describe('waitForLeaseStatus', () => {
   it('resolves with the final status on a success terminal', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
-      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+      ],
     });
     const final = await waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 });
     expect(final.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     expect(isLeaseFailureTerminal(final)).toBe(false);
+  });
+
+  it('keeps waiting while an ACTIVE lease has no provision_status, and resolves once it is ready', async () => {
+    // Every Fred release reports provision_status whenever the lease's backend answers, so its
+    // absence on an ACTIVE lease is a backend the provider could not read, not a healthy lease.
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE' },
+        { state: 'LEASE_STATE_ACTIVE' },
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+      ],
+    });
+    const final = await waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 });
+    expect(final.provision_status).toBe('ready');
+    expect(ctx.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('times out instead of resolving success when provision_status never arrives', async () => {
+    const warnLines: string[] = [];
+    const warnSpy = vi
+      .spyOn(logger, 'warn')
+      .mockImplementation((m: unknown) => {
+        warnLines.push(String(m));
+      });
+    try {
+      const ctx = makeWaitCtx({
+        providerUuid: 'p1',
+        statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+      });
+      const error = await waitForLeaseStatus(ctx, LEASE_UUID, {
+        intervalMs: 5,
+        timeout: 60,
+      }).catch((err: unknown) => err);
+      expect(error).toMatchObject({
+        code: 'QUERY_FAILED',
+        details: { lease_uuid: LEASE_UUID, last_provision_status: undefined },
+      });
+      expect((error as Error).message).toContain(
+        'reported no provision_status',
+      );
+      expect(
+        warnLines.filter((l) => l.includes('reported no provision_status')),
+      ).toHaveLength(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('resolves (does NOT reject) on a CLOSED failure terminal — caller inspects', async () => {
@@ -120,7 +173,7 @@ describe('waitForLeaseStatus', () => {
       statusFrames: [
         { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
         { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
-        { state: 'LEASE_STATE_ACTIVE' },
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
       ],
     });
     const onStatus = vi.fn();
@@ -142,7 +195,7 @@ describe('waitForLeaseStatus', () => {
       statusFrames: [
         { state: 'LEASE_STATE_PENDING' },
         { state: 'LEASE_STATE_PENDING' },
-        { state: 'LEASE_STATE_ACTIVE' },
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
       ],
     });
     const onStatus = vi.fn();
@@ -162,7 +215,7 @@ describe('waitForLeaseStatus', () => {
       providerUuid: 'p1',
       statusFrames: [
         { state: 'LEASE_STATE_PENDING' },
-        { state: 'LEASE_STATE_ACTIVE' },
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
       ],
     });
     const p = waitForLeaseStatus(ctx, LEASE_UUID, {
@@ -180,7 +233,9 @@ describe('waitForLeaseStatus', () => {
   it('rejects on setup failure (lease not found on chain)', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
-      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+      ],
     });
     // Override the chain lease query to return no lease.
     (ctx.query.liftedinit.billing.v1.lease as unknown as ReturnType<
@@ -345,7 +400,9 @@ describe('waitForLeaseStatus', () => {
   it('a PRE-ABORTED signal rejects with signal.reason and does NO poll', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
-      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+      ],
     });
     const reason = new DOMException('cancelled', 'AbortError');
     const p = waitForLeaseStatus(ctx, LEASE_UUID, {
@@ -403,7 +460,9 @@ describe('waitForLeaseStatus', () => {
   it('waits with no opts', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
-      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+      ],
     });
     await expect(waitForLeaseStatus(ctx, LEASE_UUID)).resolves.toBeDefined();
   });
@@ -607,7 +666,9 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
   it('snapshot-on-open resolves an already-terminal lease before any event', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
-      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }], // snapshot = ready
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+      ], // snapshot = ready
     });
     const { transport, sockets } = makeFakeEvents();
     (ctx as { events?: EventTransport }).events = transport;
@@ -646,7 +707,9 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
   it('a permanent close (1008) falls back to polling', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
-      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }], // poll resolves
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+      ], // poll resolves
     });
     const { transport, sockets } = makeFakeEvents();
     (ctx as { events?: EventTransport }).events = transport;
@@ -663,7 +726,9 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
   it('falls back to polling after exhausting reconnect attempts', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
-      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+      ],
     });
     const { transport, sockets } = makeFakeEvents();
     (ctx as { events?: EventTransport }).events = transport;
@@ -681,7 +746,9 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
   it('a pre-aborted signal rejects before opening any socket', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
-      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+      ],
     });
     const { transport, sockets } = makeFakeEvents();
     (ctx as { events?: EventTransport }).events = transport;

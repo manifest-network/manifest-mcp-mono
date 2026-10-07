@@ -127,10 +127,29 @@ export const PROVISION_FAILED: ReadonlySet<string> = new Set([
  * PROVISION_IN_PROGRESS and correctly keeps polling, while a status the CLIENT
  * cannot recognize was luckier and got reported as healthy.
  *
- * An absent `provision_status` still means success — that is a legacy provider
- * which never populates the field, not an unrecognized value.
+ * An absent `provision_status` is not success either. Every Fred release
+ * (v0.2.0 onward, v0.13.0 included) reports it whenever the lease's backend
+ * answers; `/status` omits it only when that lookup fails or finds nothing. An
+ * ACTIVE lease without one is therefore a backend the provider could not read
+ * (unreachable, fenced by its operator since Fred PR #245, or holding no
+ * record), never a confirmed deployment. Both wait drivers keep waiting on it.
  */
 export const PROVISION_SUCCESS: ReadonlySet<string> = new Set(['ready']);
+
+/** Why an ACTIVE lease without `provision_status` is not ready. Shared by both
+ *  wait drivers and their deadline errors so the diagnosis reads the same. */
+export const MISSING_PROVISION_STATUS_DIAGNOSIS =
+  "The provider reported no provision_status for this ACTIVE lease: it could not read the lease's backend (unreachable, fenced by its operator, or holding no record).";
+
+/**
+ * Report an ACTIVE lease whose provider sent no `provision_status`. Each wait
+ * calls this at most once, so a 3s poll loop does not repeat it on every tick.
+ */
+export function warnMissingProvisionStatus(leaseUuid: string): void {
+  logger.warn(
+    `[fred] Lease ${leaseUuid}: ${MISSING_PROVISION_STATUS_DIAGNOSIS} Treating it as not yet ready.`,
+  );
+}
 
 /**
  * Statuses this client KNOWS about that are none of ready / in-progress /
@@ -315,9 +334,14 @@ function readinessUnconfirmedMessage(
       'app_status before treating it as failed.'
     );
   }
+  const missingProvisionStatus =
+    input.lastState === LeaseState.LEASE_STATE_ACTIVE &&
+    input.lastProvisionStatus === undefined
+      ? ` ${MISSING_PROVISION_STATUS_DIAGNOSIS}`
+      : '';
   return (
     `Lease ${input.leaseUuid} poll timed out after ${input.timeoutMs}ms without a verdict from the ` +
-    `provider (${where}). This is NOT a reported failure: the provider never returned a failed ` +
+    `provider (${where}).${missingProvisionStatus} This is NOT a reported failure: the provider never returned a failed ` +
     'provision_status, and a cold image pull alone can take 5 minutes. The deployment may still be ' +
     'coming up — re-check with app_status, or wait again with a longer timeout, before treating it ' +
     'as failed.' +
@@ -505,6 +529,7 @@ export async function pollLeaseReadiness(
   let lastProvisionStatus: string | undefined;
   let consecutiveFailures = 0;
   let lastPollError: unknown;
+  let warnedMissingProvisionStatus = false;
 
   while (Date.now() < deadline) {
     abortSignal?.throwIfAborted();
@@ -591,55 +616,61 @@ export async function pollLeaseReadiness(
         // an unrecognized status keeps polling rather than reporting ready, so a
         // value added by a newer provider cannot be mistaken for health
         // (ENG-651 — see PROVISION_SUCCESS for why the default inverted). An
-        // ABSENT field still returns, preserving the original ACTIVE-returns
-        // behavior for providers that don't populate it at all.
+        // ABSENT field keeps polling too: every Fred release reports it whenever
+        // the lease's backend answers, so its absence means the provider could
+        // not read that backend (see PROVISION_SUCCESS).
         //
         // Readiness is decided by state + provision_status ONLY, never by the
         // presence of `reason`: Fred retains the failure attribution on a
         // healthy `ready` lease whose last update rolled back, so treating a
         // non-empty reason as a failure would strand every such lease (ENG-638).
         const ps = status.provision_status;
-        if (ps !== undefined) {
-          if (PROVISION_FAILED.has(ps)) {
-            // ENG-638: prefer ENG-508's reason/message, fall back to the
-            // deprecated last_error a pre-ENG-508 provider still sends. This
-            // message is the only wire carrying Fred failure detail into
-            // agent-core (deploy-app.ts stringifies err.message), so it has to
-            // stay informative for BOTH shapes.
-            const detail = failureDetail(status);
-            const failure = describeFredFailure(status);
-            const guidance = guidanceFor(failure?.reason);
-            throw new ProviderApiError(
-              0,
-              `Lease ${leaseUuid} is ACTIVE but provisioning ${ps}${
-                detail ? `: ${detail}` : ''
-              }`,
-              {
-                kind: 'poll_verdict',
-                details: {
-                  lease_uuid: leaseUuid,
-                  readiness: 'failed',
-                  provision_status: ps,
-                  ...(failure?.reason !== undefined && {
-                    reason: failure.reason,
-                  }),
-                  ...(failure?.message !== undefined && {
-                    message: failure.message,
-                  }),
-                  ...(guidance && { next_step: guidance.nextStep }),
-                },
+        if (ps === undefined) {
+          if (!warnedMissingProvisionStatus) {
+            warnedMissingProvisionStatus = true;
+            warnMissingProvisionStatus(leaseUuid);
+          }
+          break;
+        }
+        if (PROVISION_FAILED.has(ps)) {
+          // ENG-638: prefer ENG-508's reason/message, fall back to the
+          // deprecated last_error a pre-ENG-508 provider still sends. This
+          // message is the only wire carrying Fred failure detail into
+          // agent-core (deploy-app.ts stringifies err.message), so it has to
+          // stay informative for BOTH shapes.
+          const detail = failureDetail(status);
+          const failure = describeFredFailure(status);
+          const guidance = guidanceFor(failure?.reason);
+          throw new ProviderApiError(
+            0,
+            `Lease ${leaseUuid} is ACTIVE but provisioning ${ps}${
+              detail ? `: ${detail}` : ''
+            }`,
+            {
+              kind: 'poll_verdict',
+              details: {
+                lease_uuid: leaseUuid,
+                readiness: 'failed',
+                provision_status: ps,
+                ...(failure?.reason !== undefined && {
+                  reason: failure.reason,
+                }),
+                ...(failure?.message !== undefined && {
+                  message: failure.message,
+                }),
+                ...(guidance && { next_step: guidance.nextStep }),
               },
-            );
-          }
-          if (!PROVISION_SUCCESS.has(ps)) {
-            // In-progress, retained, or a value this client has never heard of.
-            // None is CONFIRMED healthy, so keep polling: it either settles into
-            // a status we do recognize, or the caller's deadline expires with an
-            // error naming the last status seen. Both are honest; reporting it
-            // as a ready deploy is not. (ENG-651)
-            warnIfUnrecognizedProvisionStatus(ps, leaseUuid);
-            break;
-          }
+            },
+          );
+        }
+        if (!PROVISION_SUCCESS.has(ps)) {
+          // In-progress, retained, or a value this client has never heard of.
+          // None is CONFIRMED healthy, so keep polling: it either settles into
+          // a status we do recognize, or the caller's deadline expires with an
+          // error naming the last status seen. Both are honest; reporting it
+          // as a ready deploy is not. (ENG-651)
+          warnIfUnrecognizedProvisionStatus(ps, leaseUuid);
+          break;
         }
         return status;
       }

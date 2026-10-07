@@ -21,10 +21,12 @@ import {
   DEFAULT_MAX_CONSECUTIVE_FAILURES,
   DEFAULT_POLL_TIMEOUT_MS,
   MAX_RETRY_AFTER_HONOURED_MS,
+  MISSING_PROVISION_STATUS_DIAGNOSIS,
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
   PROVISION_SUCCESS,
   warnIfUnrecognizedProvisionStatus,
+  warnMissingProvisionStatus,
 } from '../readiness/poll-lease-readiness.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
@@ -64,19 +66,20 @@ function classifyTerminal(s: FredLeaseStatus, leaseUuid?: string): Terminal {
   switch (s.state) {
     case LeaseState.LEASE_STATE_ACTIVE: {
       const ps = s.provision_status;
-      if (ps !== undefined) {
-        if (PROVISION_FAILED.has(ps)) return 'failure';
-        if (!PROVISION_SUCCESS.has(ps)) {
-          // In-progress, retained, or unrecognized. Not CONFIRMED healthy in any of those cases, so
-          // keep watching — success is an allowlist, never a fall-through (ENG-651; see
-          // PROVISION_SUCCESS). `retained` lands here when the chain lease is still ACTIVE, which is
-          // correct: Fred's reconciler re-provisions an ACTIVE lease it finds unprovisioned, so the
-          // lease is coming back rather than gone.
-          warnIfUnrecognizedProvisionStatus(ps, leaseUuid);
-          return 'pending';
-        }
+      // Absent: the provider could not read the lease's backend (see PROVISION_SUCCESS). Not
+      // confirmed healthy, so keep watching; the drivers report it once per wait.
+      if (ps === undefined) return 'pending';
+      if (PROVISION_FAILED.has(ps)) return 'failure';
+      if (!PROVISION_SUCCESS.has(ps)) {
+        // In-progress, retained, or unrecognized. Not CONFIRMED healthy in any of those cases, so
+        // keep watching — success is an allowlist, never a fall-through (ENG-651; see
+        // PROVISION_SUCCESS). `retained` lands here when the chain lease is still ACTIVE, which is
+        // correct: Fred's reconciler re-provisions an ACTIVE lease it finds unprovisioned, so the
+        // lease is coming back rather than gone.
+        warnIfUnrecognizedProvisionStatus(ps, leaseUuid);
+        return 'pending';
       }
-      return 'success'; // ACTIVE + `ready`, or an absent field (a provider that never populates it)
+      return 'success'; // ACTIVE + `ready`
     }
     case LeaseState.LEASE_STATE_CLOSED:
     case LeaseState.LEASE_STATE_REJECTED:
@@ -200,9 +203,27 @@ interface DriverArgs {
   /** Mutable scratch shared by both drivers: the last provision_status actually observed, so the
    *  deadline rejection can name it. Held in an object because DriverArgs itself is readonly. */
   readonly observed: {
+    lastState?: LeaseState;
     lastProvisionStatus?: string;
     lastPollError?: unknown;
+    /** Set once this wait has reported an ACTIVE lease without provision_status. */
+    reportedMissingProvisionStatus?: boolean;
   };
+}
+
+/** Record a provider-authored status for the deadline error, and report an ACTIVE lease without
+ *  provision_status once per wait (classifyTerminal keeps such a lease pending). */
+function observeStatus(a: DriverArgs, status: FredLeaseStatus): void {
+  a.observed.lastState = status.state;
+  a.observed.lastProvisionStatus = status.provision_status;
+  if (
+    status.state === LeaseState.LEASE_STATE_ACTIVE &&
+    status.provision_status === undefined &&
+    !a.observed.reportedMissingProvisionStatus
+  ) {
+    a.observed.reportedMissingProvisionStatus = true;
+    warnMissingProvisionStatus(a.leaseUuid);
+  }
 }
 
 /** The overall-deadline rejection, shared by the poll and WS paths so the message stays consistent.
@@ -224,10 +245,16 @@ function timedOutError(
             : String(observed.lastPollError),
           PROVIDER_TEXT_EXCERPT_CHARS,
         );
+  const missingProvisionStatus =
+    observed.lastState === LeaseState.LEASE_STATE_ACTIVE &&
+    observed.lastProvisionStatus === undefined;
   return new ManifestMCPError(
     ManifestMCPErrorCode.QUERY_FAILED,
     `waitForLeaseStatus timed out after ${timeoutMs}ms; lease ${leaseUuid} still non-terminal ` +
       `(last provision_status: ${observed.lastProvisionStatus ?? 'unknown'})` +
+      (missingProvisionStatus
+        ? `. ${MISSING_PROVISION_STATUS_DIAGNOSIS}`
+        : '') +
       (lastPollError !== undefined
         ? `; last status read failed with: ${lastPollError}`
         : ''),
@@ -315,7 +342,7 @@ async function waitViaPoll(a: DriverArgs): Promise<FredLeaseStatus> {
     }
     consecutiveFailures = 0;
     a.observed.lastPollError = undefined;
-    a.observed.lastProvisionStatus = status.provision_status;
+    observeStatus(a, status);
     if (classifyTerminal(status, leaseUuid) !== 'pending') return status; // resolve (terminal NOT emitted via onStatus)
     a.emit(status);
     if (Date.now() >= deadlineAt)
@@ -382,7 +409,7 @@ function runWsConnection(
     /** Classify a PROVIDER-AUTHORED status: resolve the attempt if terminal, else report progress. */
     const consider = (status: FredLeaseStatus): void => {
       if (settled) return; // never emit / resolve twice from a frame that lands after finish()
-      a.observed.lastProvisionStatus = status.provision_status;
+      observeStatus(a, status);
       if (classifyTerminal(status, leaseUuid) !== 'pending') {
         finish({ kind: 'terminal', status });
         return;

@@ -73,7 +73,7 @@ const PENDING_STEP = { json: { state: 'LEASE_STATE_PENDING' } } as const;
 describe('getLeaseStatus', () => {
   it('fetches status with auth header and converts state to LeaseState', async () => {
     const probe = fetchProbe({
-      json: { state: 'LEASE_STATE_ACTIVE' },
+      json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
     });
 
     const result = await getLeaseStatus(
@@ -207,7 +207,7 @@ describe('getLeaseLogs', () => {
 describe('pollLeaseUntilReady', () => {
   it('returns immediately when state is ACTIVE', async () => {
     const probe = fetchProbe({
-      json: { state: 'LEASE_STATE_ACTIVE' },
+      json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
     });
 
     const result = await pollLeaseUntilReady(
@@ -426,22 +426,65 @@ describe('pollLeaseUntilReady', () => {
     }
   });
 
-  it('still returns immediately when provision_status is ABSENT (a provider that never populates it)', async () => {
-    // The absent field is NOT an unrecognized value — it is a provider that does not report
-    // provisioning at all, and gating on it would strand every such lease. Unchanged by ENG-651.
-    const probe = fetchProbe({
-      json: { state: 'LEASE_STATE_ACTIVE' },
-    });
+  it('keeps polling while an ACTIVE lease has no provision_status, and returns once it is ready', async () => {
+    // Every Fred release (v0.2.0 onward, v0.13.0 included) reports provision_status whenever its
+    // backend answers. An ACTIVE lease without one is a backend the provider could not read
+    // (unreachable, fenced by its operator in Fred PR #245, or holding no record), never a healthy
+    // deployment, so it is not confirmed ready.
+    const probe = fetchProbe((_call, n) => ({
+      json:
+        n < 2
+          ? { state: 'LEASE_STATE_ACTIVE' }
+          : { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+    }));
 
     const result = await pollLeaseUntilReady(
       PROVIDER_URL,
       LEASE_UUID,
       AUTH_TOKEN,
-      { intervalMs: 10, timeoutMs: 1000 },
+      { intervalMs: 10, timeoutMs: 5000 },
       probe.fetch,
     );
-    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(probe.calls).toHaveLength(1);
+    expect(result.provision_status).toBe('ready');
+    expect(probe.calls).toHaveLength(3);
+  });
+
+  it('never reports a lease ready when its provider never reports provision_status', async () => {
+    const warnLines: string[] = [];
+    const warnSpy = vi
+      .spyOn(logger, 'warn')
+      .mockImplementation((m: unknown) => {
+        warnLines.push(String(m));
+      });
+    try {
+      const probe = fetchProbe({ json: { state: 'LEASE_STATE_ACTIVE' } });
+      const error = await pollLeaseUntilReady(
+        PROVIDER_URL,
+        LEASE_UUID,
+        AUTH_TOKEN,
+        { intervalMs: 10, timeoutMs: 60 },
+        probe.fetch,
+      ).catch((err: unknown) => err);
+      expect(error).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+      expect(error).toMatchObject({
+        reason: 'deadline',
+        lastState: LeaseState.LEASE_STATE_ACTIVE,
+        lastProvisionStatus: undefined,
+      });
+      expect((error as Error).message).toContain(
+        'reported no provision_status',
+      );
+      expect(probe.calls.length).toBeGreaterThan(1);
+      // Reported once per lease, not on every poll, and not as an unrecognized value.
+      const missing = warnLines.filter((l) =>
+        l.includes('reported no provision_status'),
+      );
+      expect(missing).toHaveLength(1);
+      expect(missing[0]).toContain(LEASE_UUID);
+      expect(warnLines.filter((l) => l.includes('Unrecognized'))).toEqual([]);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('keeps polling while provision_status is the known "unknown" (indeterminate, not ready)', async () => {
@@ -581,7 +624,10 @@ describe('pollLeaseUntilReady', () => {
 
   it('polls until ACTIVE after PENDING', async () => {
     const probe = fetchProbe((_call, n) => ({
-      json: { state: n < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE' },
+      json: {
+        state: n < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+        provision_status: n < 2 ? 'provisioning' : 'ready',
+      },
     }));
 
     const result = await pollLeaseUntilReady(
@@ -617,7 +663,10 @@ describe('pollLeaseUntilReady', () => {
 
   it('uses callback function for auth token refresh', async () => {
     const probe = fetchProbe((_call, n) => ({
-      json: { state: n < 1 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE' },
+      json: {
+        state: n < 1 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+        provision_status: n < 1 ? 'provisioning' : 'ready',
+      },
     }));
 
     const tokenFn = vi
@@ -709,7 +758,10 @@ describe('pollLeaseUntilReady', () => {
 
   it('invokes checkChainState before the provider on each iteration', async () => {
     const probe = fetchProbe((_call, n) => ({
-      json: { state: n < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE' },
+      json: {
+        state: n < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+        provision_status: n < 2 ? 'provisioning' : 'ready',
+      },
     }));
 
     const checkChainState = vi.fn().mockResolvedValue(null);
@@ -798,7 +850,10 @@ describe('pollLeaseUntilReady', () => {
 
   it('continues polling while checkChainState returns null', async () => {
     const probe = fetchProbe((_call, n) => ({
-      json: { state: n < 1 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE' },
+      json: {
+        state: n < 1 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+        provision_status: n < 1 ? 'provisioning' : 'ready',
+      },
     }));
 
     const checkChainState = vi.fn().mockResolvedValue(null);
@@ -899,7 +954,10 @@ describe('pollLeaseUntilReady', () => {
 
   it('calls onProgress on each poll iteration', async () => {
     const probe = fetchProbe((_call, n) => ({
-      json: { state: n < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE' },
+      json: {
+        state: n < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+        provision_status: n < 2 ? 'provisioning' : 'ready',
+      },
     }));
 
     const onProgress = vi.fn();
@@ -918,12 +976,15 @@ describe('pollLeaseUntilReady', () => {
     expect(onProgress).toHaveBeenCalledTimes(3);
     expect(onProgress).toHaveBeenNthCalledWith(1, {
       state: LeaseState.LEASE_STATE_PENDING,
+      provision_status: 'provisioning',
     });
     expect(onProgress).toHaveBeenNthCalledWith(2, {
       state: LeaseState.LEASE_STATE_PENDING,
+      provision_status: 'provisioning',
     });
     expect(onProgress).toHaveBeenNthCalledWith(3, {
       state: LeaseState.LEASE_STATE_ACTIVE,
+      provision_status: 'ready',
     });
   });
 });
@@ -960,7 +1021,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
     const probe = scriptReads([
       transient(),
       transient(),
-      { json: { state: 'LEASE_STATE_ACTIVE' } },
+      { json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' } },
     ]);
 
     const result = await pollLeaseUntilReady(
@@ -985,7 +1046,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
       transient(),
       transient(),
       transient(),
-      { json: { state: 'LEASE_STATE_ACTIVE' } },
+      { json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' } },
     ]);
 
     const result = await pollLeaseUntilReady(
@@ -1047,7 +1108,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
       transient(),
       transient(),
       transient(),
-      { json: { state: 'LEASE_STATE_ACTIVE' } },
+      { json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' } },
     ]);
 
     const result = await pollLeaseUntilReady(
@@ -1078,7 +1139,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
           'AbortError',
         ),
       },
-      { json: { state: 'LEASE_STATE_ACTIVE' } },
+      { json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' } },
     ]);
 
     const result = await pollLeaseUntilReady(
@@ -1145,7 +1206,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
       // look before abandoning a lease that has already been created on chain.
       const probe = scriptReads([
         { json: null },
-        { json: { state: 'LEASE_STATE_ACTIVE' } },
+        { json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' } },
       ]);
 
       const result = await pollLeaseUntilReady(
@@ -1348,7 +1409,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
     const probe = scriptReads([
       { status: 404, text: 'lease not found' },
       { status: 404, text: 'lease not found' },
-      { json: { state: 'LEASE_STATE_ACTIVE' } },
+      { json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' } },
     ]);
 
     const result = await pollLeaseUntilReady(
@@ -1387,7 +1448,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
     // parse entirely. The real `parseRetryAfterMs` runs now.
     const probe = scriptReads([
       { status: 429, text: 'rate limited', headers: { 'retry-after': '1' } },
-      { json: { state: 'LEASE_STATE_ACTIVE' } },
+      { json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' } },
     ]);
 
     const startedAt = Date.now();
