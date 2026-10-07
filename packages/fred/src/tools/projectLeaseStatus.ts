@@ -1,6 +1,7 @@
 import {
   bigIntReplacer,
   type FredLeaseStatus,
+  sanitizeForDisplay,
 } from '@manifest-network/manifest-mcp-core';
 import { sanitizeFailureFields } from '../failure-reason.js';
 import {
@@ -25,6 +26,7 @@ const PRIORITY_FIELDS = [
   'message',
   'last_error',
   'fail_count',
+  'terminal_budget',
   'created_at',
   'retained_until',
   'items',
@@ -63,10 +65,19 @@ export function sanitizeLeaseStatusForDisplay(
     reason: _reasonRaw,
     message: _messageRaw,
     last_error: _lastErrorRaw,
+    terminal_budget: terminalBudget,
     ...rest
   } = source;
   const sanitized = {
     ...rest,
+    // Validated by the response schema; the provider-authored verdict still
+    // reaches model context, so it is sanitized like the failure fields.
+    ...(terminalBudget !== undefined && {
+      terminal_budget: {
+        verdict: sanitizeForDisplay(terminalBudget.verdict, 32),
+        consecutive_failures: terminalBudget.consecutive_failures,
+      },
+    }),
     ...sanitizeFailureFields(status),
     ...sanitizeRetentionFields(status),
   };

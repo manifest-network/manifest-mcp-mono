@@ -74,6 +74,7 @@ export {
   type FredReadCtx,
   type FredReasonGuidance,
   type FredServiceStatus,
+  type FredTerminalBudget,
   failureDetail,
   fetchActiveLease,
   fetchJsonChecked,

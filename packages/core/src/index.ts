@@ -90,6 +90,7 @@ export type {
   FredLeaseReleases,
   FredLeaseStatus,
   FredServiceStatus,
+  FredTerminalBudget,
   InstanceInfo,
   LeaseConnectionResponse,
   ManifestDeploySpec,

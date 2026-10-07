@@ -198,6 +198,19 @@ interface FredFailureFields {
   readonly message?: string;
 }
 
+/**
+ * A backend's consecutive-failure budget (Fred PR #252, ENG-799). Fred closes an
+ * ACTIVE lease for repeated failure only when `verdict` is `exhausted`; `retry`
+ * means it re-provisions. Only the tenant workload's own consecutive failures
+ * count, so `fail_count` (a lifetime diagnostic) never decides a close.
+ */
+export interface FredTerminalBudget {
+  /** `retry` or `exhausted` today. Open set: an unrecognized value never closes. */
+  readonly verdict: string;
+  /** Recorded consecutive failures of the tenant's own workload. */
+  readonly consecutive_failures: number;
+}
+
 export interface FredLeaseStatus extends FredFailureFields {
   readonly state: LeaseState;
   readonly provision_status?: string;
@@ -213,7 +226,10 @@ export interface FredLeaseStatus extends FredFailureFields {
    * independently of this client. Read `message` and fall back to this.
    */
   readonly last_error?: string;
+  /** Lifetime count of recorded failures, whoever caused them. A diagnostic only. */
   readonly fail_count?: number;
+  /** Present when the backend reports one (Fred PR #252); a current docker backend always does. */
+  readonly terminal_budget?: FredTerminalBudget;
   readonly created_at?: string;
   readonly services?: Record<string, FredServiceStatus>;
   // Retention (present only when provision_status == "retained", ENG-329/ENG-600).
@@ -232,7 +248,10 @@ export interface FredLeaseLogs {
 
 export interface FredLeaseProvision extends FredFailureFields {
   readonly status: string;
+  /** Lifetime count of recorded failures, whoever caused them. A diagnostic only. */
   readonly fail_count: number;
+  /** Absent when the backend reports none or Fred answers from persisted diagnostics. */
+  readonly terminal_budget?: FredTerminalBudget;
   /**
    * Set only when the most recent provisioning attempt failed. The Fred
    * provider omits the field on success, so the optional marker matches

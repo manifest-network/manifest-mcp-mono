@@ -63,7 +63,7 @@ function legacyAdmissionRefusal(error: unknown, operation: Operation): boolean {
 }
 
 /**
- * Devnet harness only, tied to the pinned Fred main 315ed5a (its 503 semantics
+ * Devnet harness only, tied to the pinned Fred main 9c063b4 (its 503 semantics
  * come from PRs #242 and #243). Never use this policy for an unknown provider
  * or an earlier uncertain attempt. Recognized answers
  * for the current key (placement/maintenance_application.go, api/handlers.go):

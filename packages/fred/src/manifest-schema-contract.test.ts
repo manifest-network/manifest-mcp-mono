@@ -318,32 +318,90 @@ const contractCases: readonly ContractCase[] = [
     schemaValid: false,
     preflightValid: true,
   },
+  // Fred PR #254 (ENG-1127) bounds health_check timings at admission: zero (or
+  // omitted) uses the default, negatives are refused, and any other value must
+  // be at least Docker's 1ms minimum.
   {
-    name: 'zero health duration accepted by Go',
+    name: 'zero health duration uses the default',
     manifest: {
       image: 'nginx',
       health_check: { test: ['NONE'], interval: '0' },
     },
-    schemaValid: false,
-    preflightValid: true,
+    schemaValid: true,
   },
   {
-    name: 'negative health duration accepted by Go',
+    name: 'integer zero health duration uses the default',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], interval: 0 },
+    },
+    schemaValid: true,
+  },
+  {
+    name: 'one-millisecond health duration is admitted',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], timeout: '1ms' },
+    },
+    schemaValid: true,
+  },
+  {
+    name: 'integer one-millisecond health duration is admitted',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], timeout: 1_000_000 },
+    },
+    schemaValid: true,
+  },
+  {
+    name: 'negative health duration rejected at admission',
     manifest: {
       image: 'nginx',
       health_check: { test: ['NONE'], timeout: '-5s' },
     },
     schemaValid: false,
-    preflightValid: true,
+  },
+  {
+    name: 'sub-millisecond health duration rejected at admission',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], start_period: '500us' },
+    },
+    schemaValid: false,
+  },
+  {
+    name: 'integer sub-millisecond health duration rejected at admission',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], interval: 999_999 },
+    },
+    schemaValid: false,
+  },
+  {
+    name: 'fractional sub-millisecond health duration passes the schema but not admission',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], interval: '0.5ms' },
+    },
+    schemaValid: true,
+    preflightValid: false,
   },
   {
     name: 'Greek-mu health duration accepted by Go',
     manifest: {
       image: 'nginx',
-      health_check: { test: ['NONE'], start_period: '5μs' },
+      health_check: { test: ['NONE'], start_period: '5000μs' },
     },
     schemaValid: false,
     preflightValid: true,
+  },
+  {
+    name: 'sub-millisecond Greek-mu health duration rejected at admission',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], start_period: '5μs' },
+    },
+    schemaValid: false,
   },
 ];
 

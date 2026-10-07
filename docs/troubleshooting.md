@@ -179,7 +179,7 @@ Do not close solely because `failedStep` is `poll`, and do not start another rea
 
 Check the provider:
 
-1. `app_diagnostics({ lease_uuid })` — `provision_status`, `fail_count`, and the failure attribution `reason` / `message` / `next_step`.
+1. `app_diagnostics({ lease_uuid })` — `provision_status`, `fail_count`, `terminal_budget` when the provider reports it, and the failure attribution `reason` / `message` / `next_step`.
 2. `get_logs({ lease_uuid, tail: 200 })` — container output (will be empty if the image hasn't pulled yet).
 3. `app_status({ lease_uuid })` — chain state vs provider state may differ when something failed during provisioning.
 
@@ -200,6 +200,8 @@ surface it on `message`, so either provider generation gives you a usable diagno
 | `reason` | Meaning | Who can act |
 |---|---|---|
 | `ContainerExited` | Container exited unexpectedly (crash, non-zero exit, OOM kill) | you |
+| `HealthCheckFailed` | A health check never passed during startup (Fred PR #255). It never counts toward the provider closing the lease, so an ACTIVE lease is re-provisioned, and billed, until you fix the app or its `health_check` | you |
+| `ContainerStartFailed` | The container runtime refused to start a container, which never ran: for example, its entrypoint is missing from the image (Fred PR #255). Like `HealthCheckFailed`, it never counts toward a close | you |
 | `ImagePullFailed` | The image could not be pulled or failed admission — **after a failed update, the previous version can still be running** | you |
 | `Internal` | Internal provider error, not your workload; often transient | you (retry once, then escalate) |
 | `RestartFailed` | A restart you requested did not complete | you |
@@ -208,13 +210,19 @@ surface it on `message`, so either provider generation gives you a usable diagno
 | `VolumeCleanupExhausted` | Volume cleanup failed after every retry | provider |
 | `CleanupFailed` | Container/volume cleanup on deprovision failed | provider |
 | `BackendStorageLost` | The provider irrecoverably lost the storage holding the lease (Fred PR #243); the app and its data on that provider are gone. The provider ends the lease on chain only in a later sweep, so it can still be ACTIVE and billing: check `app_status` `chainState` | nobody can recover this lease: deploy a new one and restore data from your own backups; you can `close_lease` a lease that is still ACTIVE yourself |
+| `VolumeDeletePending` | A provision was refused while an earlier deletion of the lease's own volume finishes (Fred PR #250); transient | provider |
+| `VolumeDeletionInProgress` | The lease is closing and its volume is still being deleted (Fred PR #250); progress, not a failure | provider |
 | `Unknown` | Marked failed with no specific cause recorded | you |
 
-Two things to keep in mind:
+Keep in mind:
 
 - **The set is open and add-only.** A provider running a newer Fred may return a `reason` not listed
   here. That is expected, not an error: treat it as a generic failure and read `message`. The tools
   pass unknown values through untouched and simply omit `next_step`.
+- **`fail_count` never decides a close.** It is a lifetime diagnostic. On a provider running Fred
+  PR #252 or later, `terminal_budget` carries the decision: `verdict: exhausted` means the provider
+  will close the lease for repeated failures of the workload itself (at least three in a row over
+  at least 30 minutes), and `retry` means it re-provisions.
 - **A non-empty `reason` does not mean the app is down.** Fred keeps the attribution on a healthy
   lease whose last update rolled back, so a `ready` app can legitimately report
   `reason: UpdateFailed` or `ImagePullFailed`. Decide liveness from `provision_status`, not from the

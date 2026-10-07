@@ -54,6 +54,20 @@ export const FRED_REASON_GUIDANCE: Readonly<
       'Call get_logs({ lease_uuid, tail: 200 }) and read the lines just before the exit. Fix the entrypoint or config and update_app; if it was OOM-killed, redeploy on a larger SKU instead.',
     actor: 'tenant',
   },
+  HealthCheckFailed: {
+    explanation:
+      'A container health check never passed during startup: it reported unhealthy, or was still not healthy at the startup deadline (Fred PR #255). This never counts toward the provider closing the lease, so an ACTIVE lease is re-provisioned, and billed, on every pass until you fix it.',
+    nextStep:
+      'Call get_logs({ lease_uuid, tail: 200 }) to see why the app is not healthy, then fix the app or its health_check (start_period must cover startup) and update_app. Close the lease with close_lease (manifest-mcp-lease) if you no longer need it.',
+    actor: 'tenant',
+  },
+  ContainerStartFailed: {
+    explanation:
+      'The container runtime refused to start a container, so it never ran: for example, its entrypoint or command does not exist in the image (Fred PR #255). This never counts toward the provider closing the lease, so an ACTIVE lease is re-provisioned, and billed, on every pass until you fix it.',
+    nextStep:
+      'Check the image entrypoint and the manifest command and args (get_logs is usually empty because nothing ran), fix them or the image, and update_app. Close the lease with close_lease (manifest-mcp-lease) if you no longer need it.',
+    actor: 'tenant',
+  },
   ImagePullFailed: {
     explanation:
       'The provider could not pull or admit the image: a wrong or private reference, a non-HTTPS registry, an image over the provider size budget or 128 layers, no manifest for its platform, unsupported layer contents, or a registry rate limit or stall (Fred PR #242 admission). If app_status reports ready, the previous release is still running.',
@@ -115,6 +129,20 @@ export const FRED_REASON_GUIDANCE: Readonly<
     // reconciler may defer the chain close, so closing is cleanup, not recovery.
     nextStep:
       'No tenant action exists to recover this lease or its data: restart_app, update_app, and restore_app all fail for it. Deploy a fresh lease with deploy_app and restore your data from your own backups. While app_status still shows this lease ACTIVE, you can close it with close_lease (manifest-mcp-lease) instead of waiting for the provider.',
+    actor: 'provider',
+  },
+  VolumeDeletePending: {
+    explanation:
+      "The provider refused to provision because an earlier deletion of this lease's own volume is still finishing (Fred PR #250). It is provider-side and transient.",
+    nextStep:
+      'No tenant action exists: nothing you retry can hasten the deletion, and later provisioning attempts can succeed once it completes. If the lease stays failed with this reason, report the lease UUID to the provider operator.',
+    actor: 'provider',
+  },
+  VolumeDeletionInProgress: {
+    explanation:
+      'The lease is closing and the provider is still deleting its volume (Fred PR #250). This is progress, not a failure: the close completes when the deletion does.',
+    nextStep:
+      'No tenant action exists: wait for the close to complete. If it does not, report the lease UUID to the provider operator.',
     actor: 'provider',
   },
   Unknown: {

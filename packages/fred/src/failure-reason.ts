@@ -12,6 +12,8 @@ import { sanitizeForDisplay } from '@manifest-network/manifest-mcp-core';
  */
 export const FRED_FAILURE_REASONS = [
   'ContainerExited',
+  'HealthCheckFailed',
+  'ContainerStartFailed',
   'ImagePullFailed',
   'Internal',
   'RestartFailed',
@@ -20,6 +22,8 @@ export const FRED_FAILURE_REASONS = [
   'VolumeCleanupExhausted',
   'CleanupFailed',
   'BackendStorageLost',
+  'VolumeDeletePending',
+  'VolumeDeletionInProgress',
   'Unknown',
 ] as const;
 

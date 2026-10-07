@@ -4,12 +4,13 @@
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
 generated manifest artifacts now use Fred `main`
-`315ed5a3f4a7214c78a7b16bb179c513e5aa9eef`. It adds
+`9c063b4735124bd518e75cedf7db7b6dde0b131e`. It adds
 [PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
 [ENG-1055](https://linear.app/liftedinit/issue/ENG-1055),
-[PR #243](https://github.com/manifest-network/fred/pull/243), and the operator
+[PR #243](https://github.com/manifest-network/fred/pull/243), the operator
 controls of [PR #244](https://github.com/manifest-network/fred/pull/244) and
-[PR #245](https://github.com/manifest-network/fred/pull/245) to PR #240's merge.
+[PR #245](https://github.com/manifest-network/fred/pull/245), and PRs #247
+through #257 to PR #240's merge.
 Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
 requires explicit opt-in. Revalidate against Fred's released revision before
 rollout.
@@ -141,6 +142,20 @@ fence. Reads fail closed: `/provision` answers `500`, and `/status` omits
 `provision_status`, exactly as for any backend Fred cannot read. The devnet
 configures no fence and keeps its legacy shared `callback_secret`, so the new
 per-backend key rules do not apply to it.
+
+PRs #247 through #257 change four things a client sees. PR #254 bounds
+`health_check` timings at admission: a negative value, or one between 0 and
+Docker's 1ms minimum, is refused, and mono's `pr240` preflight now refuses the
+same. PR #252 closes an ACTIVE lease for repeated failure only when the backend
+reports an exhausted consecutive-failure budget. `/status` and `/provision`
+carry it as `terminal_budget`, which mono surfaces, and `fail_count` becomes a
+lifetime diagnostic. PR #255 fails a startup crash definitely instead of leaving
+the lease provisioning, with the new reasons `HealthCheckFailed` and
+`ContainerStartFailed`. PR #250 adds `VolumeDeletePending` and
+`VolumeDeletionInProgress` for held volume deletions. Mono has curated guidance
+for all four reasons. PR #251 runs tenant containers under a restricted seccomp
+profile, PR #257 fixes restart and update of leases adopted from v0.13, and PR
+#256 documents the existing token scope; none needs a client change.
 
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.

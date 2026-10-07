@@ -74,6 +74,22 @@ describe('projectLeaseStatus', () => {
     expect(sanitized.restore_hint).toBe('retry now');
   });
 
+  it('sanitizes the provider-authored terminal_budget verdict and keeps the count', () => {
+    const sanitized = sanitizeLeaseStatusForDisplay({
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      provision_status: 'failed',
+      terminal_budget: {
+        verdict: `exhausted${RLO}\nnow`,
+        consecutive_failures: 3,
+      },
+    });
+
+    expect(sanitized.terminal_budget).toEqual({
+      verdict: 'exhausted now',
+      consecutive_failures: 3,
+    });
+  });
+
   it('measures BigInt with the same encoder used by structured responses', () => {
     const projected = projectLeaseStatus({ state: 3, height: 42n });
 

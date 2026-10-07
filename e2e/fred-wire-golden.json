@@ -55,6 +55,7 @@
     "sometimes": [
       "meta_hash_hex",
       "fail_count",
+      "terminal_budget",
       "reason",
       "message",
       "retained_until",
@@ -79,6 +80,7 @@
     "observed_via": "app_diagnostics structuredContent (EXPLICIT projection — mono's contract, not Fred's; cannot detect a field Fred adds)",
     "always": ["lease_uuid", "lease_state", "provision_status", "fail_count"],
     "sometimes": [
+      "terminal_budget",
       "reason",
       "message",
       "last_error",
