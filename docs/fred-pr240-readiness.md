@@ -182,9 +182,10 @@ maintenance headers fit each provider's CORS policy; these are not a browser run
 `e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
 the latest live status/release observation. That observation records its Fred
 revision and run; it now comes from the green full E2E run at Fred `main`
-`315ed5a`, whose key sets matched the earlier `8a26371` and `4f00091`
-observations. Replace it
-only from a green live run at a newer pin. The diagnostics
+`9c063b4`. Its status and diagnostics key sets add only `terminal_budget` to the
+earlier `315ed5a`, `8a26371` and `4f00091` observations. The golden lists that
+key as conditional, because the v0.13 leg never sends it. Replace the
+observation only from a green live run at a newer pin. The diagnostics
 projection records `lease_state` as a required field derived by mono. Conditional
 fields not seen in a healthy run retain their baseline provenance; do not invent
 observations from Go source. Local unit and bootstrap-script tests do not
