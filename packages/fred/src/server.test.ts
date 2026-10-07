@@ -303,6 +303,17 @@ describe('FredMCPServer', () => {
       });
     });
 
+    it('app_diagnostics scopes the fail_count close semantics to the provider generation', async () => {
+      // A Fred v0.13 provider closes at its reprovision limit and sends no
+      // terminal_budget, so the description must not call fail_count inert.
+      const description = (await listTools()).get(
+        'app_diagnostics',
+      )?.description;
+      expect(description).not.toMatch(/never decides a close/);
+      expect(description).toContain('Fred v0.13');
+      expect(description).toContain('reprovision limit');
+    });
+
     it('all structured manifest sites document syntax and preserve port config', async () => {
       interface JsonSchemaNode {
         const?: unknown;
@@ -1358,6 +1369,32 @@ describe('FredMCPServer', () => {
       expect(text).not.toContain(
         'record provision_status, fail_count, and last_error',
       );
+    });
+
+    it('scopes the fail_count close semantics to the provider generation', async () => {
+      // Fred PR #252 decides a close from terminal_budget, but a Fred v0.13
+      // provider still closes a failed ACTIVE lease once fail_count reaches its
+      // reprovision limit (3 by default) and sends no terminal_budget. Telling
+      // the model that fail_count "never decides a close" was wrong for every
+      // v0.13 provider mono supports by default.
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await withClient(server, (c) =>
+        c.getPrompt({
+          name: 'diagnose-failing-app',
+          arguments: { lease_uuid: LEASE_UUID },
+        }),
+      );
+      const text = (
+        result.messages[0].content as { type: string; text: string }
+      ).text;
+      expect(text).not.toMatch(/never decides a close/);
+      expect(text).toContain('When `terminal_budget` is present');
+      expect(text).toContain('When it is absent');
+      expect(text).toContain('Fred v0.13');
+      expect(text).toContain('reprovision limit');
     });
 
     it('renders shutdown-all-leases without arguments', async () => {

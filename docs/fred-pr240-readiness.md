@@ -148,8 +148,10 @@ PRs #247 through #257 change four things a client sees. PR #254 bounds
 Docker's 1ms minimum, is refused, and mono's `pr240` preflight now refuses the
 same. PR #252 closes an ACTIVE lease for repeated failure only when the backend
 reports an exhausted consecutive-failure budget. `/status` and `/provision`
-carry it as `terminal_budget`, which mono surfaces, and `fail_count` becomes a
-lifetime diagnostic. PR #255 fails a startup crash definitely instead of leaving
+carry it as `terminal_budget`, which mono surfaces, and on such a provider
+`fail_count` becomes a lifetime diagnostic. A v0.13 provider sends no budget and
+still closes at its `fail_count` reprovision limit, so mono's prompt and tool
+text keep both readings. PR #255 fails a startup crash definitely instead of leaving
 the lease provisioning, with the new reasons `HealthCheckFailed` and
 `ContainerStartFailed`. PR #250 adds `VolumeDeletePending` and
 `VolumeDeletionInProgress` for held volume deletions. Mono has curated guidance

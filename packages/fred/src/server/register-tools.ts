@@ -1093,7 +1093,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_diagnostics',
     {
       description:
-        'Get provision diagnostics for an existing app, including REJECTED, EXPIRED, and CLOSED leases when the provider still has a record. Returns the chain lease state separately from provider provision status, failure count, and failure attribution: a machine-readable reason, a human message, and a suggested next step. Missing or pruned provider records return an error; they do not imply zero failures. Older providers report last_error instead of reason/message. Current providers also report terminal_budget: verdict "exhausted" means the provider will close the lease for repeated failures of the workload itself, "retry" that it re-provisions; fail_count is a lifetime count that never decides a close.',
+        'Get provision diagnostics for an existing app, including REJECTED, EXPIRED, and CLOSED leases when the provider still has a record. Returns the chain lease state separately from provider provision status, failure count, and failure attribution: a machine-readable reason, a human message, and a suggested next step. Missing or pruned provider records return an error; they do not imply zero failures. Older providers report last_error instead of reason/message. Providers running Fred PR #252 or later also report terminal_budget, which then decides a close for repeated failure: verdict "exhausted" means the provider will close the lease for repeated failures of the workload itself, "retry" that it re-provisions, and fail_count is only a lifetime count. Without terminal_budget, a close is still possible: a Fred v0.13 provider closes a failed ACTIVE lease once fail_count reaches its reprovision limit (3 by default).',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -1122,9 +1122,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
         // declared because the schema is downstream-visible.
         last_error: z.string().optional(),
         // Fred PR #252 (ENG-799): the backend's consecutive-failure budget.
-        // `exhausted` means the provider will close the lease for repeated
-        // failure; `fail_count` is only a lifetime diagnostic. `verdict` is an
-        // open set, so it is a string, never an enum.
+        // When present, `exhausted` means the provider will close the lease
+        // for repeated failure and `fail_count` is only a lifetime diagnostic.
+        // Its absence proves nothing: Fred v0.13 sends none and still closes
+        // at its `fail_count` reprovision limit. `verdict` is an open set, so
+        // it is a string, never an enum.
         terminal_budget: z
           .object({
             verdict: z.string(),

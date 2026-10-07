@@ -93,7 +93,7 @@ export function registerPrompts(mcpServer: McpServer): void {
               ``,
               `Then summarize:`,
               `- Lease state on chain.`,
-              `- Provider state (provision_status / phase / fail_count / terminal_budget), and — separately — the failure attribution (reason / message), noting whether it is current or historical. \`terminal_budget.verdict: exhausted\` means the provider will close the lease for repeated failures of the workload itself; \`retry\` means it re-provisions. \`fail_count\` is a lifetime count and never decides a close.`,
+              `- Provider state (provision_status / phase / fail_count / terminal_budget), and — separately — the failure attribution (reason / message), noting whether it is current or historical. When \`terminal_budget\` is present (Fred PR #252 or later), it decides whether the provider closes the lease for repeated failure: \`verdict: exhausted\` means it will close the lease for repeated failures of the workload itself, \`retry\` means it re-provisions, and \`fail_count\` is then only a lifetime count. When it is absent, do not rule out a close: a Fred v0.13 provider closes a failed ACTIVE lease once \`fail_count\` reaches its reprovision limit (3 by default).`,
               `- Most relevant log lines (last error or repeated failures).`,
               `- ONE concrete next step. If \`app_diagnostics\` returned \`next_step\`, lead with it; otherwise derive one from \`message\` plus the logs and name the exact tool to call (get_logs / restart_app / update_app / restore_app, all on this server, or \`close_lease\` on **manifest-mcp-lease**). If the step needs a server that is not connected, say which one rather than stopping.`,
             ].join('\n'),

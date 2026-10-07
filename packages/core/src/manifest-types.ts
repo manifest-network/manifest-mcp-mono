@@ -199,10 +199,13 @@ interface FredFailureFields {
 }
 
 /**
- * A backend's consecutive-failure budget (Fred PR #252, ENG-799). Fred closes an
- * ACTIVE lease for repeated failure only when `verdict` is `exhausted`; `retry`
- * means it re-provisions. Only the tenant workload's own consecutive failures
- * count, so `fail_count` (a lifetime diagnostic) never decides a close.
+ * A backend's consecutive-failure budget (Fred PR #252, ENG-799). A provider
+ * that reports it closes an ACTIVE lease for repeated failure only when
+ * `verdict` is `exhausted`; `retry` means it re-provisions. Only the tenant
+ * workload's own consecutive failures count, so there `fail_count` is a
+ * lifetime diagnostic. Its absence proves nothing: a Fred v0.13 provider sends
+ * none and closes a failed ACTIVE lease once `fail_count` reaches its
+ * reprovision limit (3 by default).
  */
 export interface FredTerminalBudget {
   /** `retry` or `exhausted` today. Open set: an unrecognized value never closes. */
@@ -226,7 +229,11 @@ export interface FredLeaseStatus extends FredFailureFields {
    * independently of this client. Read `message` and fall back to this.
    */
   readonly last_error?: string;
-  /** Lifetime count of recorded failures, whoever caused them. A diagnostic only. */
+  /**
+   * Lifetime count of recorded failures. With `terminal_budget` present it is a
+   * diagnostic only; a Fred v0.13 provider, which sends no `terminal_budget`,
+   * closes a failed ACTIVE lease once this reaches its reprovision limit.
+   */
   readonly fail_count?: number;
   /** Present when the backend reports one (Fred PR #252); a current docker backend always does. */
   readonly terminal_budget?: FredTerminalBudget;
@@ -248,7 +255,11 @@ export interface FredLeaseLogs {
 
 export interface FredLeaseProvision extends FredFailureFields {
   readonly status: string;
-  /** Lifetime count of recorded failures, whoever caused them. A diagnostic only. */
+  /**
+   * Lifetime count of recorded failures. With `terminal_budget` present it is a
+   * diagnostic only; a Fred v0.13 provider, which sends no `terminal_budget`,
+   * closes a failed ACTIVE lease once this reaches its reprovision limit.
+   */
   readonly fail_count: number;
   /** Absent when the backend reports none or Fred answers from persisted diagnostics. */
   readonly terminal_budget?: FredTerminalBudget;
