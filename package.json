@@ -48,7 +48,7 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "@size-limit/preset-small-lib": "13.0.3",
     "@types/node": "22.20.4",
-    "@vitest/coverage-v8": "4.1.10",
+    "@vitest/coverage-v8": "5.0.4",
     "ajv": "8.20.0",
     "dependency-cruiser": "18.4.0",
     "publint": "0.3.24",
@@ -56,7 +56,7 @@
     "tsdown": "0.22.14",
     "typescript": "5.9.3",
     "undici": "8.10.2",
-    "vitest": "4.1.10",
+    "vitest": "5.0.4",
     "yaml": "2.9.1"
   },
   "overrides": {

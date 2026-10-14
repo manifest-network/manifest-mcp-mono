@@ -297,11 +297,19 @@ test('gap 1 (sabotage): a known-bad type test FAILS a root-invoked `vitest run <
     );
     const out = run.stdout + run.stderr;
     assert.notEqual(run.status, 0, `known-bad probe passed:\n${out}`);
-    assert.match(out, /Type Errors\s+1 failed/, out);
+    // Vitest 5 unified typechecking with test collection: a failed type assertion is a failed
+    // TEST carrying a TypeCheckError, and the `Type Errors` line counts only errors outside
+    // any test (it reads `no errors` here). The TypeCheckError is the proof tsc analyzed the
+    // file: `expectTypeOf` is a runtime no-op, so no runtime run can produce one.
     assert.match(out, /Tests\s+1 failed \(1\)/, out);
     assert.match(
       out,
-      /\|@manifest-network\/manifest-mcp-core\| src\/__tcprobe_known_bad\.test-d\.ts > known-bad probe/,
+      /TypeCheckError: Type 'number' does not satisfy the constraint/,
+      `the probe failed, but not with a type error from tsc:\n${out}`,
+    );
+    assert.match(
+      out,
+      /\|@manifest-network\/manifest-mcp-core\| src\/__tcprobe_known_bad\.test-d\.ts(?::\d+)? > known-bad probe/,
       `probe was not attributed to the core project:\n${out}`,
     );
   } finally {
