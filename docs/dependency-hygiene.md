@@ -236,6 +236,25 @@ dependency-size increase.
 The two affected budgets rise only by the measured dependency delta. The browser
 module, node-only import, and `/reads` tree-shaking guards remain mandatory.
 
+The 2026-10-14 size-limit update from 13.0.3 to 14.2.0 changes the bundler:
+`@size-limit/preset-small-lib` 14 measures with Rolldown instead of esbuild.
+Rolldown proves module bodies free of side effects and drops them where esbuild
+kept them. That is the behavior of Vite 8, which bundles with Rolldown and which
+SDK consumers such as Barney use, so the budgets now track what those consumers
+ship. Two effects dominate. Rolldown tree-shakes Zod's `z` namespace, so the
+esbuild cost of `import { z } from 'zod'` described above disappears and that
+follow-up is moot. And `/reads` no longer carries ManifestJS, `bn.js` and
+`@cosmjs/math`: esbuild kept about 53 kB, 45 kB and 8 kB of minified code from
+them, although `getLease` and `getBalance` import ManifestJS only as types. Every budget ratchets
+down by the measured saving and keeps its previous headroom.
+
+| SDK entry | esbuild (gzip bytes) | Rolldown | New budget | Preserved headroom |
+| --- | ---: | ---: | ---: | ---: |
+| `/reads` | 26,073 | 1,590 | 2,977 | 1,387 |
+| `/catalog` | 27,770 | 27,206 | 27,226 | 20 |
+| `/deploy` | 1,118,175 | 1,042,374 | 1,042,411 | 37 |
+| root client | 1,106,935 | 1,030,837 | 1,030,855 | 18 |
+
 The namespace-import reduction leaves large crypto and codegen costs that need
 upstream work:
 

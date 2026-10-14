@@ -5,7 +5,7 @@
     "import": "{ getLease, getBalance }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "27.46 kB"
+    "limit": "2977 B"
   },
   {
     "name": "manifest-sdk /catalog",
@@ -13,7 +13,7 @@
     "import": "{ resolveSku }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "27.79 kB"
+    "limit": "27226 B"
   },
   {
     "name": "manifest-sdk /deploy",
@@ -21,7 +21,7 @@
     "import": "{ deployApp }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "1118212 B"
+    "limit": "1042411 B"
   },
   {
     "name": "manifest-sdk root client",
@@ -29,6 +29,6 @@
     "import": "{ createManifestClient }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "1106953 B"
+    "limit": "1030855 B"
   }
 ]
