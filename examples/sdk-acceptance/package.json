@@ -24,7 +24,7 @@
     "@manifest-network/manifestjs": "4.0.0"
   },
   "devDependencies": {
-    "rolldown": "1.2.9",
+    "rolldown": "1.2.14",
     "typescript": "5.9.3",
     "vitest": "5.0.4"
   }
