@@ -4,13 +4,13 @@
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
 generated manifest artifacts now use Fred `main`
-`9c063b4735124bd518e75cedf7db7b6dde0b131e`. It adds
+`9388c8604dec7c8dd8bac8edcdcff181b040180d`. It adds
 [PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
 [ENG-1055](https://linear.app/liftedinit/issue/ENG-1055),
 [PR #243](https://github.com/manifest-network/fred/pull/243), the operator
 controls of [PR #244](https://github.com/manifest-network/fred/pull/244) and
 [PR #245](https://github.com/manifest-network/fred/pull/245), and PRs #247
-through #257 to PR #240's merge.
+through #265 to PR #240's merge.
 Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
 requires explicit opt-in. Revalidate against Fred's released revision before
 rollout.
@@ -106,7 +106,7 @@ The local devnet independently defaults to `FRED_COMPATIBILITY=pr240`; this does
 not change the SDK/MCP default. Its v0.13 mode uses a separate legacy backend
 topology. Never start either mode against the other version's persisted authority.
 
-The PR240 devnet builds Go 1.26.8 and includes `placement-preflight`. CI installs a
+The PR240 devnet builds Go 1.26.9 and includes `placement-preflight`. CI installs a
 pinned compatible Docker daemon before checking the required server API floor.
 The devnet launcher seals a fresh backend storage identity and runs the backend
 natively on the Docker host under systemd. Stateful backend containers are
@@ -158,6 +158,20 @@ the lease provisioning, with the new reasons `HealthCheckFailed` and
 for all four reasons. PR #251 runs tenant containers under a restricted seccomp
 profile, PR #257 fixes restart and update of leases adopted from v0.13, and PR
 #256 documents the existing token scope; none needs a client change.
+
+PRs #259 through #265 need no client change. PR #265 re-provisions a restored
+lease after it loses its container, PR #260 re-provisions a v0.13-adopted lease
+after maintenance, and PR #262 retries lifecycle callbacks; all three are
+server-side. PR #263 raises Fred's Go floor to 1.26.9, so the devnet builder
+moves with it. PRs #259 and #261 bring Fred's documentation in line with its
+code. The published manifest schema now rejects ingress on a UDP port and
+accepts only clean tmpfs paths; mono's preflight already enforced the first and
+follows Go's path cleaning for the second, so the contract test records a path
+such as `/data/` as schema-invalid but admitted. The tenant docs now state
+behavior mono already handles: a payload upload can answer `409` when the
+provider could not store it (mono treats any non-2xx upload as a failure), an
+unrecognized lease state arrives as a numeric string, and `provision_status`
+can be `unknown`.
 
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.
