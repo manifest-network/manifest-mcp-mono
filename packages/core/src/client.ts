@@ -95,6 +95,16 @@ const DEFAULT_BROADCAST_POLL_INTERVAL_MS = 3_000;
 /** Poll for an available rate-limit token; abort-aware sleep rejects immediately on cancellation. */
 const RATE_LIMIT_POLL_MS = 25;
 
+/** A rate the limiter can represent that admits at least one request per interval. */
+function admitsOneToken(requestsPerSecond: unknown): boolean {
+  return (
+    typeof requestsPerSecond === 'number' &&
+    Number.isFinite(requestsPerSecond) &&
+    requestsPerSecond >= 1 &&
+    requestsPerSecond <= Number.MAX_SAFE_INTEGER
+  );
+}
+
 /** Preserve readable SDK errors and normalize failures whose diagnostic fields cannot be read. */
 function connectionError(
   error: unknown,
@@ -262,6 +272,8 @@ export class CosmosClientManager {
   private queryClient: ManifestQueryClient | null = null;
   private signingClient: SigningStargateClient | null = null;
   private readonly rateLimiter: RateLimiter;
+  /** The configured rate as given, kept for the misconfiguration message. */
+  private readonly requestsPerSecond: number;
 
   // Shared by chain ID and then signer address, including across wallets and RPC endpoints.
   private readonly broadcastLocks: Map<string, Promise<unknown>>;
@@ -308,8 +320,15 @@ export class CosmosClientManager {
     // Initialize rate limiter with configured or default requests per second
     const requestsPerSecond =
       config.rateLimit?.requestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND;
+    this.requestsPerSecond = requestsPerSecond;
+    // limiter 4 throws a plain RangeError from its constructor for a negative, non-finite or
+    // unsafe count, and getInstance takes an UNVALIDATED config. An empty bucket instead keeps
+    // that misconfiguration on the acquire path, where assertBudgetAdmitsOneToken reports it
+    // typed like every other rate that cannot admit one request.
     this.rateLimiter = new RateLimiter({
-      tokensPerInterval: requestsPerSecond,
+      tokensPerInterval: admitsOneToken(requestsPerSecond)
+        ? requestsPerSecond
+        : 0,
       interval: 'second',
     });
   }
@@ -772,14 +791,14 @@ export class CosmosClientManager {
    * typed and non-retryable rather than a hang on one side and a vendored library's wording on
    * the other. It agrees with `validateConfig`, which already rejects a non-positive-integer
    * `requestsPerSecond`; `getInstance` takes an UNVALIDATED config and is on the public SDK
-   * barrel, which is how such a value gets here at all.
+   * barrel, which is how such a value gets here at all. That covers NaN and non-numbers too:
+   * under limiter 3 a NaN bucket admitted every request, so the rate went unlimited.
    */
   private assertBudgetAdmitsOneToken(): void {
-    const { bucketSize } = this.rateLimiter.tokenBucket;
-    if (bucketSize < 1) {
+    if (!admitsOneToken(this.requestsPerSecond)) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
-        `rateLimit.requestsPerSecond must be at least 1, got ${bucketSize}; a single request cannot fit the budget.`,
+        `rateLimit.requestsPerSecond must be a finite number of at least 1, got ${String(this.requestsPerSecond)}; a single request cannot fit the budget.`,
       );
     }
   }
