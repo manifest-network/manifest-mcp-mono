@@ -100,7 +100,7 @@ npm run test:e2e
 
 This ignored checkout leaves `submodules/fred` and the manifest schema provenance
 at PR #240. Legacy mode uses Go 1.26.6 and the v0.13 container backend, with its own
-Compose project and named volumes. Modern mode uses Go 1.26.8 and the native backend.
+Compose project and named volumes. Modern mode uses Go 1.26.9 and the native backend.
 The modes share fixed ports and the dedicated XFS root, so they cannot run together.
 Changing modes requires removing the current mode's named volumes **and recreating
 the matching XFS image**; neither mode may reuse the other's storage. Keep the same
@@ -120,7 +120,7 @@ and starts the dedicated `manifest-mcp-e2e-backend` systemd unit. The placement
 initializer verifies backend HTTPS using the generated test certificate and
 proves that the new provider and backend are empty. It explicitly accepts this
 isolated test chain's plaintext gRPC. Keep tenant lease traffic and the test
-runner stopped until `devnet.sh up` completes. The Fred image builds with Go 1.26.8
+runner stopped until `devnet.sh up` completes. The Fred image builds with Go 1.26.9
 and includes `placement-preflight` for this step.
 
 For a normal restart, use `bash e2e/scripts/devnet.sh down`, then

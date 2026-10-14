@@ -210,14 +210,36 @@ const contractCases: readonly ContractCase[] = [
     },
     schemaValid: true,
   },
+  // Go semantic rules the published schema gained at Fred main 9388c86
+  // (docs sync, Fred PRs #259/#261). Until then these were overlays where Go
+  // was stricter than the schema; schema and preflight now agree.
+  {
+    name: 'UDP ingress',
+    manifest: { image: 'nginx', ports: { '53/udp': { ingress: true } } },
+    schemaValid: false,
+  },
+  {
+    name: 'tmpfs path that normalizes to a sensitive path',
+    manifest: { image: 'nginx', tmpfs: ['/var/../proc'] },
+    schemaValid: false,
+  },
+  {
+    name: 'tmpfs paths that normalize to duplicates',
+    manifest: { image: 'nginx', tmpfs: ['/a', '/a/'] },
+    schemaValid: false,
+  },
+  // The schema now accepts only already-clean tmpfs paths, while Fred's Go
+  // cleans each path (path.Clean) before checking it. A path that is valid
+  // once cleaned is therefore stricter in the schema than at admission, and
+  // preflight follows Go.
+  {
+    name: 'unclean but otherwise valid tmpfs path (schema stricter than Go)',
+    manifest: { image: 'nginx', tmpfs: ['/data/'] },
+    schemaValid: false,
+    preflightValid: true,
+  },
   // Named Go semantic overlays below. These are intentionally stricter than
   // the published JSON schema and must remain visible as different verdicts.
-  {
-    name: 'UDP ingress overlay',
-    manifest: { image: 'nginx', ports: { '53/udp': { ingress: true } } },
-    schemaValid: true,
-    preflightValid: false,
-  },
   {
     name: 'multiple ingress ports overlay',
     manifest: {
@@ -227,18 +249,6 @@ const contractCases: readonly ContractCase[] = [
         '443/tcp': { ingress: true },
       },
     },
-    schemaValid: true,
-    preflightValid: false,
-  },
-  {
-    name: 'normalized sensitive tmpfs overlay',
-    manifest: { image: 'nginx', tmpfs: ['/var/../proc'] },
-    schemaValid: true,
-    preflightValid: false,
-  },
-  {
-    name: 'normalized duplicate tmpfs overlay',
-    manifest: { image: 'nginx', tmpfs: ['/a', '/a/'] },
     schemaValid: true,
     preflightValid: false,
   },
