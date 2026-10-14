@@ -2655,25 +2655,40 @@ describe('CosmosClientManager', () => {
       // poll turns a loud failure into a silent hang — so this is a hang-detector as much as an
       // assertion. Reachable because `getInstance` takes an UNVALIDATED config and is on the
       // public SDK barrel, while `validateConfig` would have rejected this rps.
+      //
+      // limiter 4 also throws a plain RangeError from its constructor for a negative,
+      // non-finite or unsafe count. getInstance must not leak that: every invalid rate is the
+      // same typed, non-retryable INVALID_CONFIG on acquire. Under limiter 3, NaN constructed a
+      // NaN bucket whose removeTokens resolved at once — no rate limiting at all.
       it.each([
-        ['with a signal', true],
-        ['without a signal', false],
+        ['0.5', 0.5],
+        ['0', 0],
+        ['-1', -1],
+        ['NaN', Number.NaN],
+        ['Infinity', Number.POSITIVE_INFINITY],
+        ['above MAX_SAFE_INTEGER', Number.MAX_SAFE_INTEGER + 2],
+        ['a non-number', '5' as unknown as number],
       ])(
-        'rejects INVALID_CONFIG instead of hanging when requestsPerSecond < 1 (%s)',
-        async (_label, withSignal) => {
-          const instance = CosmosClientManager.getInstance(
-            makeConfig({
-              chainId: `rl-sub-one-${withSignal}`,
-              rateLimit: { requestsPerSecond: 0.5 },
-            }),
-            makeWallet(),
-          );
-          const signal = withSignal ? new AbortController().signal : undefined;
-          await expect(instance.acquireRateLimit(signal)).rejects.toMatchObject(
-            {
+        'rejects INVALID_CONFIG on acquire, never from getInstance, when requestsPerSecond is %s',
+        async (label, requestsPerSecond) => {
+          for (const withSignal of [true, false]) {
+            const instance = CosmosClientManager.getInstance(
+              makeConfig({
+                chainId: `rl-invalid-${label}-${withSignal}`,
+                rateLimit: { requestsPerSecond },
+              }),
+              makeWallet(),
+            );
+            const signal = withSignal
+              ? new AbortController().signal
+              : undefined;
+            await expect(
+              instance.acquireRateLimit(signal),
+            ).rejects.toMatchObject({
               code: ManifestMCPErrorCode.INVALID_CONFIG,
-            },
-          );
+              message: expect.stringContaining(String(requestsPerSecond)),
+            });
+          }
         },
       );
 
