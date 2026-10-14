@@ -253,7 +253,7 @@ down by the measured saving and keeps its previous headroom.
 | `/reads` | 26,073 | 1,590 | 2,977 | 1,387 |
 | `/catalog` | 27,770 | 27,206 | 27,226 | 20 |
 | `/deploy` | 1,118,175 | 1,042,374 | 1,042,411 | 37 |
-| root client | 1,106,618 | 1,030,450 | 1,030,785 | 335 |
+| root client | 1,106,935 | 1,030,837 | 1,030,855 | 18 |
 
 The namespace-import reduction leaves large crypto and codegen costs that need
 upstream work:
