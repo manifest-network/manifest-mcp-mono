@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BACKEND_STORAGE_LOST,
+  BILLING_ONLY_PAYLOAD,
   CAPACITY_RESERVED,
   KEY_REQUIRED,
   MAINTENANCE_EXPIRED,
@@ -8,6 +9,7 @@ import {
 import { ProviderApiError, type ProviderErrorKind } from './provider.js';
 import {
   isBackendStorageLost,
+  isBillingOnlyPayloadRefusal,
   isIdempotencyKeyRequired,
   providerErrorReason,
 } from './provider-error-reason.js';
@@ -102,6 +104,7 @@ describe('providerErrorReason', () => {
     expect(providerErrorReason(error)).toBeUndefined();
     expect(isBackendStorageLost(error)).toBe(false);
     expect(isIdempotencyKeyRequired(error)).toBe(false);
+    expect(isBillingOnlyPayloadRefusal(error)).toBe(false);
   });
 });
 
@@ -142,5 +145,31 @@ describe('isIdempotencyKeyRequired', () => {
     [400, 'Idempotency-Key header must occur exactly once'],
   ])('does not match status %i with body %j', (status, body) => {
     expect(isIdempotencyKeyRequired(answer(status, body))).toBe(false);
+  });
+});
+
+describe('isBillingOnlyPayloadRefusal', () => {
+  it('matches the PR #268 refusal of a billing-only lease payload', () => {
+    expect(
+      isBillingOnlyPayloadRefusal(
+        answer(BILLING_ONLY_PAYLOAD.status, BILLING_ONLY_PAYLOAD.text),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    // The restore refusal is a different answer.
+    [
+      400,
+      '{"error":"lease is billing-only and cannot be restored into","code":400}',
+    ],
+    [
+      503,
+      '{"error":"lease is billing-only and does not accept a payload","code":503}',
+    ],
+    [400, '{"error":"lease is billing-only and does not accept a payload"}'],
+    [400, 'lease is billing-only and does not accept a payload'],
+  ])('does not match status %i with body %j', (status, body) => {
+    expect(isBillingOnlyPayloadRefusal(answer(status, body))).toBe(false);
   });
 });

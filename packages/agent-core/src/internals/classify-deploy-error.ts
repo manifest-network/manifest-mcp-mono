@@ -62,6 +62,12 @@ export interface DeployErrorClassification {
   readinessUnconfirmed?: boolean;
   /** `details.failedStep`, when it is one of the known steps. */
   failedStep?: DeployFailedStep;
+  /**
+   * `details.billing_only === true`: every SKU of the lease is billing-only at
+   * the provider (Fred PR #268), which refused the manifest. The lease is
+   * billing and no retry can deploy it.
+   */
+  billingOnly?: boolean;
 }
 
 /**
@@ -135,12 +141,14 @@ export function classifyDeployError(
       diagnosticField(details, 'readiness_unconfirmed') === true;
     const rawStep = diagnosticField(details, 'failedStep');
     const failedStep = FAILED_STEPS.find((s) => s === rawStep);
+    const billingOnly = diagnosticField(details, 'billing_only') === true;
     return finalize(
       {
         outcome: 'partially_succeeded',
         ...(leaseUuid !== undefined && { leaseUuid }),
         ...(readinessUnconfirmed && { readinessUnconfirmed: true }),
         ...(failedStep !== undefined && { failedStep }),
+        ...(billingOnly && { billingOnly: true }),
         // `details.partial` can trigger this path with an empty envelope
         // message; fall back to a stable placeholder, matching the
         // failed-path contract ("raw error message, or a placeholder if missing").

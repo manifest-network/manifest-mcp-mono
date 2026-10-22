@@ -1371,6 +1371,8 @@ async function handleBroadcastFailure(
       ...(classified.readinessUnconfirmed === true && {
         readinessUnconfirmed: true,
       }),
+      // A billing-only lease's manifest is refused for good (Fred PR #268).
+      ...(classified.billingOnly === true && { billingOnly: true }),
     });
     const options: RecoveryOption[] = promptPayload.options.map((id) => ({
       id,

@@ -232,6 +232,31 @@ describe('renderPartialSuccessPrompt', () => {
       expect(out.options).not.toContain('retry_set_domain');
     });
 
+    it('a billing-only refusal says no app will run and the lease is billing', () => {
+      const out = renderPartialSuccessPrompt(
+        base({
+          failedStep: 'upload',
+          billingOnly: true,
+          requestedCustomDomain: 'app.example.com',
+        }),
+      );
+      expect(out.prompt).toContain('every SKU of this lease is billing-only');
+      expect(out.prompt).toContain('no app will ever run on this lease');
+      expect(out.prompt).toContain('Close it unless you meant to buy');
+      expect(out.prompt).not.toContain('The manifest upload failed');
+      // The domain step ran before the upload, so it is not offered again;
+      // keeping the lease stays available as the lease-preserving default.
+      expect(out.options).toEqual(['salvage_without_domain', 'close_lease']);
+    });
+
+    it('ignores billingOnly outside the upload step', () => {
+      const out = renderPartialSuccessPrompt(
+        base({ failedStep: 'poll', billingOnly: true }),
+      );
+      expect(out.prompt).not.toContain('billing-only');
+      expect(out.prompt).toContain('reported the deployment as FAILED');
+    });
+
     it('falls back to the legacy inference when fred reported no step', () => {
       // Cross-version safety: an older fred sends neither flag, and must
       // render exactly as it did before.

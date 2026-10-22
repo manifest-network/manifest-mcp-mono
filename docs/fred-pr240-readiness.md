@@ -179,9 +179,13 @@ longer than 10 links is always refused at admission. Mono's preflight had the
 same order dependence and accepted such a chain when its services were listed
 tail-first; it now computes each service's longest chain as Fred does. The
 published manifest schema and limits are unchanged. PR #268 adds opt-in
-billing-only SKUs: Fred acknowledges such a lease without deploying it and
-refuses a payload upload or restore for it with `400`, which `deploy_app`
-reports as a partial deployment at its upload step. PRs #271 and #272 give every
+billing-only SKUs: Fred acknowledges such a lease without deploying it, so it
+bills at once, and refuses a payload upload or restore for it with `400`. Fred
+publishes no list of those SKUs, so mono cannot refuse one before creating the
+lease. It recognizes the payload refusal by its exact body instead: `deploy_app`
+reports `details.billing_only` with guidance to close the lease unless the
+tenant meant to buy that service, and the orchestrated recovery prompt says the
+same. A restore into such a lease keeps the restore POST's in-doubt handling. PRs #271 and #272 give every
 lease its own Docker network, so service names resolve only within the lease;
 the devnet runs with `network_isolation: false`. PR #274 adds an operator-only
 `/runtime_refresh` on the backend that providerd never calls; a refresh adds one

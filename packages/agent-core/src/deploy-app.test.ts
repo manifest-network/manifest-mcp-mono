@@ -3028,6 +3028,91 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
     // (c) onFailure invoked exactly once (no double-prompt).
     expect(failures).toHaveLength(1);
   });
+
+  // Fred PR #268: fred's `details.billing_only` must reach the recovery prompt,
+  // which otherwise tells a tenant only that "the manifest upload failed".
+  it('partial-success: a billing-only refusal reaches the recovery prompt', async () => {
+    const fixture = (name: string) =>
+      readFixture(
+        'skills',
+        'deploy-app',
+        '03-partial-success-set-domain-failed',
+        'input',
+        name,
+      );
+    const spec = fixture('spec.json') as DeploySpec;
+    const metaHashResp = fixture('meta-hash-response.json') as {
+      manifest_json: string;
+      meta_hash_hex: string;
+    };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      fixture('readiness-response.json') as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created, but every SKU it uses is billing-only at this provider.',
+        {
+          partial: true,
+          failedStep: 'upload',
+          billing_only: true,
+          lease_uuid: '11111111-1111-4111-8111-111111111111',
+        },
+      ),
+    );
+
+    const { callbacks, progress, failures } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+    vi.mocked(core.stopApp).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      outcome: 'already_inactive',
+      lease_state: 'LEASE_STATE_CLOSED',
+    } as Awaited<ReturnType<typeof core.stopApp>>);
+
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: makeMockClientManager() as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider: makeMockWalletProvider(),
+      });
+    } catch {
+      // The orchestrator throws after recovery dispatch; irrelevant here.
+    }
+
+    const prompts = progress.filter(
+      (
+        e,
+      ): e is Extract<
+        ProgressEvent,
+        { kind: 'partial_success_prompt_rendered' }
+      > => e.kind === 'partial_success_prompt_rendered',
+    );
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0].prompt).toContain(
+      'every SKU of this lease is billing-only',
+    );
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.options.map((o) => o.id)).toEqual([
+      'salvage_without_domain',
+      'close_lease',
+    ]);
+  });
 });
 
 // Copilot review fix (PR #58 r3266642610): `applyPlanEdit` previously

@@ -47,6 +47,11 @@ export interface RenderPartialSuccessPromptInput {
   failedStep?: 'set_domain' | 'upload' | 'poll';
   /** fred reported `details.readiness_unconfirmed` — the app may still be starting. */
   readinessUnconfirmed?: boolean;
+  /**
+   * fred reported `details.billing_only`: the provider bills every SKU of the
+   * lease without deploying it (Fred PR #268) and refused the manifest.
+   */
+  billingOnly?: boolean;
 }
 
 export interface PartialSuccessPrompt {
@@ -98,6 +103,7 @@ export function renderPartialSuccessPrompt(
   const readinessUnconfirmed = input.readinessUnconfirmed === true;
   const setDomainFailed = input.failedStep === 'set_domain';
   const uploadFailed = input.failedStep === 'upload';
+  const billingOnly = uploadFailed && input.billingOnly === true;
   /** The poll ran and the provider answered "failed" (no unconfirmed flag). */
   const pollVerdict = input.failedStep === 'poll' && !readinessUnconfirmed;
   const legacy = input.failedStep === undefined && !readinessUnconfirmed;
@@ -117,6 +123,13 @@ export function renderPartialSuccessPrompt(
     lines.push(
       `  - The set-domain step for ${input.requestedCustomDomain} did NOT complete: ${input.reason}.`,
       '    The manifest was therefore NEVER uploaded to the provider — no app is running on this lease.',
+    );
+  } else if (billingOnly) {
+    lines.push(
+      '  - The provider refused the manifest: every SKU of this lease is billing-only there. It bills',
+      '    these SKUs and delivers their service outside Fred, so no app will ever run on this lease.',
+      '    It acknowledges such a lease as soon as it sees it, so the lease is billing or will be',
+      '    shortly. Close it unless you meant to buy that service.',
     );
   } else if (uploadFailed) {
     lines.push(
