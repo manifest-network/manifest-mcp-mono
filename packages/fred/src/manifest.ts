@@ -1071,42 +1071,74 @@ function validateStackDependencies(
     }
   }
 
+  // Mirrors Fred's analyzeDependsOn (ENG-1515): a service's longest chain is
+  // recorded once all of its dependencies are done, so it never depends on
+  // the order services are visited, and services and dependencies are visited
+  // in sorted order, so a manifest always reports the same error. The walk is
+  // iterative because it now descends every chain in full, and a stack has no
+  // service-count cap that would bound recursion.
   const WHITE = 0;
   const GRAY = 1;
   const BLACK = 2;
   const color = new Map<string, number>();
-  const visit = (name: string, depth: number): boolean => {
-    color.set(name, GRAY);
+  const links = new Map<string, number>();
+  const dependenciesOf = (name: string): string[] => {
     const service = services[name];
-    if (isPlainObject(service) && isPlainObject(service.depends_on)) {
-      for (const dependency of Object.keys(service.depends_on)) {
-        if (!serviceNameSet.has(dependency) || dependency === name) continue;
-        const path = mapKeyPath(
-          `${mapKeyPath('manifest.services', name)}.depends_on`,
-          dependency,
-        );
+    if (!isPlainObject(service) || !isPlainObject(service.depends_on))
+      return [];
+    return Object.keys(service.depends_on)
+      .filter(
+        (dependency) => serviceNameSet.has(dependency) && dependency !== name,
+      )
+      .sort();
+  };
+  const sortedNames = [...serviceNames].sort();
+
+  for (const root of sortedNames) {
+    if ((color.get(root) ?? WHITE) !== WHITE) continue;
+    color.set(root, GRAY);
+    const stack = [{ name: root, dependencies: dependenciesOf(root), next: 0 }];
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      if (frame.next < frame.dependencies.length) {
+        const dependency = frame.dependencies[frame.next++];
         const dependencyColor = color.get(dependency) ?? WHITE;
         if (dependencyColor === GRAY) {
+          const path = mapKeyPath(
+            `${mapKeyPath('manifest.services', frame.name)}.depends_on`,
+            dependency,
+          );
           errors.push(`${path}: dependency cycle detected`);
-          return false;
+          return;
         }
         if (dependencyColor === WHITE) {
-          if (depth + 1 > DEPENDS_ON_MAX_DEPTH) {
-            errors.push(
-              `${path}: dependency chain exceeds maximum depth of ${DEPENDS_ON_MAX_DEPTH}`,
-            );
-            return false;
-          }
-          if (!visit(dependency, depth + 1)) return false;
+          color.set(dependency, GRAY);
+          stack.push({
+            name: dependency,
+            dependencies: dependenciesOf(dependency),
+            next: 0,
+          });
         }
+        continue;
       }
+      let longest = 0;
+      for (const dependency of frame.dependencies) {
+        longest = Math.max(longest, (links.get(dependency) ?? 0) + 1);
+      }
+      links.set(frame.name, longest);
+      color.set(frame.name, BLACK);
+      stack.pop();
     }
-    color.set(name, BLACK);
-    return true;
-  };
+  }
 
-  for (const name of serviceNames) {
-    if ((color.get(name) ?? WHITE) === WHITE && !visit(name, 0)) return;
+  for (const name of sortedNames) {
+    const chainLinks = links.get(name) ?? 0;
+    if (chainLinks > DEPENDS_ON_MAX_DEPTH) {
+      errors.push(
+        `${mapKeyPath('manifest.services', name)}.depends_on: dependency chain exceeds maximum depth of ${DEPENDS_ON_MAX_DEPTH} (this service starts a chain of ${chainLinks} links)`,
+      );
+      return;
+    }
   }
 }
 

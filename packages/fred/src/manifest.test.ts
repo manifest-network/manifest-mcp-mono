@@ -950,33 +950,81 @@ describe('validateManifest', () => {
       );
     });
 
-    it('derives the dependency depth limit from pinned Fred Go source', () => {
-      const chain = (edges: number) => ({
-        services: Object.fromEntries(
-          Array.from({ length: edges + 1 }, (_, index) => [
-            `s${index}`,
-            {
-              image: 'nginx',
-              ...(index < edges && {
-                depends_on: {
-                  [`s${index + 1}`]: { condition: 'service_started' },
-                },
-              }),
-            },
-          ]),
-        ),
+    describe('dependency chain limit', () => {
+      const limit = FRED_MANIFEST_LIMITS.dependsOnMaxDepth;
+      // s0 -> s1 -> … -> s<edges>, with the services listed head-first or
+      // tail-first.
+      const chain = (edges: number, order: 'head-first' | 'tail-first') => {
+        const entries = Array.from({ length: edges + 1 }, (_, index) => [
+          `s${index}`,
+          {
+            image: 'nginx',
+            ...(index < edges && {
+              depends_on: {
+                [`s${index + 1}`]: { condition: 'service_started' },
+              },
+            }),
+          },
+        ]);
+        if (order === 'tail-first') entries.reverse();
+        return { services: Object.fromEntries(entries) };
+      };
+
+      it('derives the dependency depth limit from pinned Fred Go source', () => {
+        expect(validateManifest(chain(limit, 'head-first')).valid).toBe(true);
+        const overLimit = validateManifest(chain(limit + 1, 'head-first'));
+        expect(overLimit.valid).toBe(false);
+        expect(overLimit.errors).toEqual([
+          `manifest.services["s0"].depends_on: dependency chain exceeds maximum depth of ${limit} (this service starts a chain of ${limit + 1} links)`,
+        ]);
       });
-      expect(
-        validateManifest(chain(FRED_MANIFEST_LIMITS.dependsOnMaxDepth)).valid,
-      ).toBe(true);
-      const overLimit = validateManifest(
-        chain(FRED_MANIFEST_LIMITS.dependsOnMaxDepth + 1),
+
+      // Fred ENG-1515: the limit used to be measured from whichever service
+      // the walk visited first, so the same chain passed or failed with the
+      // order its services were listed in.
+      it.each(['head-first', 'tail-first'] as const)(
+        'rejects an over-limit chain listed %s',
+        (order) => {
+          expect(validateManifest(chain(limit, order)).valid).toBe(true);
+          const overLimit = validateManifest(chain(limit + 1, order));
+          expect(overLimit.valid).toBe(false);
+          expect(overLimit.errors.join(' ')).toContain(
+            `manifest.services["s0"].depends_on: dependency chain exceeds maximum depth of ${limit}`,
+          );
+        },
       );
-      expect(overLimit.valid).toBe(false);
-      expect(overLimit.errors.join(' ')).toContain('maximum depth');
-      expect(overLimit.errors.join(' ')).toContain(
-        `manifest.services["s${FRED_MANIFEST_LIMITS.dependsOnMaxDepth}"].depends_on["s${FRED_MANIFEST_LIMITS.dependsOnMaxDepth + 1}"]`,
-      );
+
+      it('measures the longest chain through a dependency already visited', () => {
+        // z -> a -> s0 -> … -> s<limit - 1> is one link over the limit. The
+        // walk has finished a by the time it reaches z, so z's length must
+        // come from a's recorded length rather than a fresh descent.
+        const { services } = chain(limit - 1, 'head-first');
+        const result = validateManifest({
+          services: {
+            ...services,
+            a: {
+              image: 'nginx',
+              depends_on: { s0: { condition: 'service_started' } },
+            },
+            z: {
+              image: 'nginx',
+              depends_on: { a: { condition: 'service_started' } },
+            },
+          },
+        });
+        expect(result.valid).toBe(false);
+        expect(result.errors).toEqual([
+          `manifest.services["z"].depends_on: dependency chain exceeds maximum depth of ${limit} (this service starts a chain of ${limit + 1} links)`,
+        ]);
+      });
+
+      it('reports one long chain without overflowing the call stack', () => {
+        const result = validateManifest(chain(20_000, 'tail-first'));
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain(
+          'this service starts a chain of 20000 links',
+        );
+      });
     });
   });
 
