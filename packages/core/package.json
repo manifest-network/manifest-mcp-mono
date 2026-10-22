@@ -96,7 +96,7 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "ipaddr.js": "2.5.0",
     "limiter": "4.1.0",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "optionalDependencies": {
     "undici": "8.10.2",
