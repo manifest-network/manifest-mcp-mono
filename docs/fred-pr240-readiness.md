@@ -4,13 +4,13 @@
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
 generated manifest artifacts now use Fred `main`
-`9388c8604dec7c8dd8bac8edcdcff181b040180d`. It adds
+`4e99b8fd68da508cfc907fbcc9387b0d572080bd`. It adds
 [PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
 [ENG-1055](https://linear.app/liftedinit/issue/ENG-1055),
 [PR #243](https://github.com/manifest-network/fred/pull/243), the operator
 controls of [PR #244](https://github.com/manifest-network/fred/pull/244) and
 [PR #245](https://github.com/manifest-network/fred/pull/245), and PRs #247
-through #265 to PR #240's merge.
+through #275 to PR #240's merge.
 Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
 requires explicit opt-in. Revalidate against Fred's released revision before
 rollout.
@@ -172,6 +172,21 @@ behavior mono already handles: a payload upload can answer `409` when the
 provider could not store it (mono treats any non-2xx upload as a failure), an
 unrecognized lease state arrives as a numeric string, and `provision_status`
 can be `unknown`.
+
+Of PRs #268 through #275, only PR #270 needs a client change. It makes Fred's
+`depends_on` chain limit independent of the order services are visited: a chain
+longer than 10 links is always refused at admission. Mono's preflight had the
+same order dependence and accepted such a chain when its services were listed
+tail-first; it now computes each service's longest chain as Fred does. The
+published manifest schema and limits are unchanged. PR #268 adds opt-in
+billing-only SKUs: Fred acknowledges such a lease without deploying it and
+refuses a payload upload or restore for it with `400`, which `deploy_app`
+reports as a partial deployment at its upload step. PRs #271 and #272 give every
+lease its own Docker network, so service names resolve only within the lease;
+the devnet runs with `network_isolation: false`. PR #274 adds an operator-only
+`/runtime_refresh` on the backend that providerd never calls; a refresh adds one
+release entry with the same manifest. PR #275 fixes adoption of v0.13 release
+histories, and PR #273 updates Fred's CI actions.
 
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.
