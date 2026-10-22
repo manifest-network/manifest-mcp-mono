@@ -16,6 +16,10 @@ const PROVIDER_ERROR_REASON = /^[a-z][a-z0-9_]{0,63}$/;
 const IDEMPOTENCY_KEY_REQUIRED =
   'Idempotency-Key header must occur exactly once';
 
+/** Fred's refusal of a billing-only lease's payload since PR #268 (`internal/api/payload.go`). */
+const BILLING_ONLY_PAYLOAD_REFUSED =
+  'lease is billing-only and does not accept a payload';
+
 interface FredErrorBody {
   readonly status: number;
   readonly error?: string;
@@ -80,4 +84,16 @@ export function isBackendStorageLost(error: unknown): boolean {
 export function isIdempotencyKeyRequired(error: unknown): boolean {
   const body = fredErrorBody(error);
   return body?.status === 400 && body.error === IDEMPOTENCY_KEY_REQUIRED;
+}
+
+/**
+ * True when the provider refused a payload upload because every SKU of the
+ * lease is billing-only there (Fred PR #268): it bills the lease but delivers
+ * the service outside Fred, so it never deploys a manifest to it. Fred
+ * acknowledges such a lease as soon as it sees it, which starts its billing.
+ * The refusal carries no `reason`, so it is recognized by its exact text.
+ */
+export function isBillingOnlyPayloadRefusal(error: unknown): boolean {
+  const body = fredErrorBody(error);
+  return body?.status === 400 && body.error === BILLING_ONLY_PAYLOAD_REFUSED;
 }

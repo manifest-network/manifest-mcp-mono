@@ -229,6 +229,26 @@ describe('classifyDeployError (ENG-280 discriminant + legacy prefix fallback)', 
       expect(r.readinessUnconfirmed).toBeUndefined();
     });
 
+    it('propagates a strict details.billing_only (Fred PR #268)', () => {
+      const flagged = classifyDeployError({
+        message: 'Deploy partially succeeded: …',
+        details: {
+          partial: true,
+          failedStep: 'upload',
+          billing_only: true,
+          lease_uuid: VALID_UUID,
+        },
+      });
+      expect(flagged.billingOnly).toBe(true);
+      expect(flagged.failedStep).toBe('upload');
+
+      const truthy = classifyDeployError({
+        message: 'Deploy partially succeeded: …',
+        details: { partial: true, billing_only: 'yes', lease_uuid: VALID_UUID },
+      });
+      expect(truthy.billingOnly).toBeUndefined();
+    });
+
     it('ignores an unknown failedStep rather than passing it through', () => {
       const r = classifyDeployError({
         message: 'Deploy partially succeeded: …',

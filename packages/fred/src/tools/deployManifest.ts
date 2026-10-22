@@ -33,6 +33,7 @@ import {
   ProviderApiError,
   uploadLeaseData,
 } from '../http/provider.js';
+import { isBillingOnlyPayloadRefusal } from '../http/provider-error-reason.js';
 import { getServiceNames, metaHashHex } from '../manifest.js';
 import { type CancellableOptions, resolveFredSignal } from './call-signal.js';
 import { createLease } from './createLease.js';
@@ -407,6 +408,32 @@ export async function deployManifest(
           readiness_unconfirmed: true,
           ...failure.pollDetails,
           ...(step !== undefined && { failedStep: step }),
+          lease_uuid: leaseUuid,
+          provider_uuid: providerUuid,
+          provider_url: providerUrl,
+        },
+      );
+    }
+    // Fred PR #268: every SKU of the lease is billing-only at this provider. It
+    // bills the lease but never deploys a manifest to it, so no retry can
+    // succeed, and it acknowledges such a lease on sight, so billing has
+    // started. The generic advice below would hide both facts.
+    if (step === 'upload' && isBillingOnlyPayloadRefusal(err)) {
+      logger.warn(
+        `[deploy] lease ${leaseUuid} uses only billing-only SKUs; the provider refused its manifest`,
+      );
+      const nextStep = `Close the lease with close_lease({ lease_uuid: "${leaseUuid}" }) to stop its billing unless you meant to buy this provider service, then deploy the app with a SKU the provider deploys.`;
+      throw new ManifestMCPError(
+        failure.code,
+        `Deploy partially succeeded: lease ${leaseUuid} was created, but every SKU it uses is billing-only at this provider. ` +
+          'The provider bills these SKUs and delivers their service outside Fred, so it refused the manifest and will never run an app on this lease. ' +
+          `It acknowledges such a lease as soon as it sees it, so the lease is ACTIVE and billing, or will be shortly. ${nextStep}`,
+        {
+          ...failure.details,
+          partial: true,
+          failedStep: step,
+          billing_only: true,
+          next_step: nextStep,
           lease_uuid: leaseUuid,
           provider_uuid: providerUuid,
           provider_url: providerUrl,

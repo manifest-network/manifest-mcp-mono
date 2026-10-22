@@ -1,6 +1,7 @@
 /**
- * Fred's exact tenant error bodies (`internal/api/handlers.go` at the pinned
- * submodule, Fred PRs #240, #242 and #243). Go's JSON encoder appends the
+ * Fred's exact tenant error bodies (`internal/api/handlers.go` and
+ * `internal/api/payload.go` at the pinned submodule, Fred PRs #240, #242, #243
+ * and #268). Go's JSON encoder appends the
  * trailing newline. Each is served as a probe step so the real transport builds
  * the `ProviderApiError` the client parses.
  */
@@ -16,6 +17,12 @@ function fredError(status: number, body: string) {
 export const KEY_REQUIRED = fredError(
   400,
   '{"error":"Idempotency-Key header must occur exactly once","code":400}',
+);
+
+/** A payload upload for a lease whose SKUs are all billing-only at the provider. */
+export const BILLING_ONLY_PAYLOAD = fredError(
+  400,
+  '{"error":"lease is billing-only and does not accept a payload","code":400}',
 );
 
 /** A command settled without running because a newer one superseded it. */

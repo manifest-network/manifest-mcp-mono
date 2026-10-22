@@ -42,6 +42,7 @@ import {
   cosmosTx,
   LeaseState,
   logger,
+  ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
   setItemCustomDomain,
@@ -51,6 +52,7 @@ import {
   makeMockClientManager,
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { BILLING_ONLY_PAYLOAD } from '../__test-utils__/fred-error-bodies.js';
 import { unreadableErrors } from '../__test-utils__/unreadable-errors.js';
 import type { FredCompatibilityConfig } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
@@ -1116,6 +1118,77 @@ describe('deployManifest', () => {
       expect(thrown.details.failedStep).toBe('upload');
       expect(thrown.details.readiness_unconfirmed).toBeUndefined();
     });
+  });
+
+  /**
+   * Fred PR #268: a lease whose SKUs are all billing-only is acknowledged (and
+   * billed) as soon as the provider sees it, and its payload is refused. No
+   * retry can deploy it, so the error must say why and that billing started,
+   * not just relay the provider's text under the generic cleanup advice.
+   */
+  it('a billing-only payload refusal explains the SKU and that billing started', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    routeWire({ data: BILLING_ONLY_PAYLOAD });
+
+    const thrown = await deployManifest(
+      await ctx(cm),
+      {
+        manifest: singleManifest(),
+        sku: { kind: 'byName', size: 'docker-micro' },
+      },
+      {},
+    ).catch((e: unknown) => e as any);
+
+    expect(thrown).toBeInstanceOf(ManifestMCPError);
+    expect(thrown.message).toContain('Deploy partially succeeded:');
+    expect(thrown.message).toContain(
+      'every SKU it uses is billing-only at this provider',
+    );
+    expect(thrown.message).toContain('ACTIVE and billing');
+    expect(thrown.message).not.toContain('if needed');
+    expect(thrown.details).toMatchObject({
+      partial: true,
+      failedStep: 'upload',
+      billing_only: true,
+      lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      next_step: expect.stringContaining(
+        'close_lease({ lease_uuid: "550e8400-e29b-41d4-a716-446655440000" })',
+      ),
+    });
+    expect(thrown.details.readiness_unconfirmed).toBeUndefined();
+    // The refusal is final: nothing polls for a deployment that cannot start.
+    expect(wire.calls.some((c) => c.url.endsWith('/status'))).toBe(false);
+  });
+
+  it('another 400 at the upload step keeps the generic cleanup advice', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    routeWire({
+      data: {
+        status: 400,
+        text: '{"error":"payload hash does not match lease meta_hash","code":400}\n',
+        headers: { 'content-type': 'application/json' },
+      },
+    });
+
+    const thrown = await deployManifest(
+      await ctx(cm),
+      {
+        manifest: singleManifest(),
+        sku: { kind: 'byName', size: 'docker-micro' },
+      },
+      {},
+    ).catch((e: unknown) => e as any);
+
+    expect(thrown.message).toContain(
+      'Close this lease with close_lease if needed.',
+    );
+    expect(thrown.details.billing_only).toBeUndefined();
   });
 
   it('already-aborted signal creates NO lease — zero side effects (ENG-666)', async () => {
