@@ -100,11 +100,11 @@
   },
   "optionalDependencies": {
     "undici": "8.10.2",
-    "ws": "8.21.3"
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
-    "@types/ws": "8.18.1",
+    "@types/ws": "8.18.2",
     "typescript": "5.9.3",
     "vitest": "5.0.4"
   },
