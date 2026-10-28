@@ -10,8 +10,11 @@ below, repairing the audited Axios/protobufjs declarations and coordinating one
 Stargate identity. Public consumer checks and cryptographic source verification
 passed; [publication evidence](releases/v0.23.0-verification.json) records the
 exact artifacts. Every subsequent release must pass the same repository,
-fresh-consumer and provenance gates. The previous manual-publication exception
-remains withdrawn.
+fresh-consumer and provenance gates. The latest release,
+[v0.24.0](https://github.com/manifest-network/manifest-mcp-mono/releases/tag/v0.24.0),
+keeps the same four adopted artifacts and passed them; see its
+[publication verification](#sdkcli-v0240-publication-verification-2026-10-28).
+The previous manual-publication exception remains withdrawn.
 
 The public v0.22.0 graph retains a compatibility problem: its core
 pins Stargate ll.3, while ManifestJS `^3.0.0` can select 3.0.1 with Stargate ll.4.
@@ -218,7 +221,9 @@ gh api --method GET /advisories --paginate \
 
 On 2026-09-22 these three queries returned no matching reviewed advisories;
 the corresponding public repository advisory endpoints also returned no published
-notices. The evidence file records that bounded result. This is not proof of absence
+notices. The evidence file records that bounded result. The review was repeated
+for v0.24.0 on 2026-10-28 with the same result, recorded in that release's
+[publication evidence](releases/v0.24.0-verification.json). This is not proof of absence
 of vulnerabilities or coverage of unpublished/unreviewed notices. The ordinary audit
 still checks Axios, protobufjs and the other transitive packages under their real
 names. No advisory allowlist or severity suppression is configured, but the
@@ -244,7 +249,30 @@ low and four moderate affected-package entries. The moderate entries are the
 existing pinned Vitest/mocker/coverage and Hono findings; the fresh production
 consumers have none. The [adoption evidence](dependency-repair-2026-09-21.json)
 records these scopes separately. These results validate the adoption branch;
-the subsequent v0.23.0 publication is recorded below.
+the subsequent v0.23.0 and v0.24.0 publications are recorded below.
+
+## SDK/CLI v0.24.0 publication verification (2026-10-28)
+
+The [release workflow](https://github.com/manifest-network/manifest-mcp-mono/actions/runs/40748989547)
+succeeded and published all nine packages. A fresh public-npm installation of
+the nine exact 0.24.0 packages passed npm 11.19.1 signature and attestation
+verification with no invalid or missing signatures. Cryptographic provenance
+bound every package to `manifest-network/manifest-mcp-mono`,
+`.github/workflows/release.yml`, `refs/tags/v0.24.0` and commit
+`63aba5c8cf19c14dc55b600e824f5acd6769bad9`. Every public tarball is
+byte-identical to the candidate that `check:consumers` packed and tested from
+the release PR head, whose tree is identical to the tagged commit. The four
+maintained dependencies are the v0.23.0 artifacts, verified again in the
+published graph.
+
+Fresh public SDK and CLI installations passed their consumer checks without
+application overrides, and both resolve the patched `undici` 8.12.3 and MCP SDK
+1.32.1. Their audits retained 11 and 15 low affected-package entries
+respectively, with zero moderate, high or critical findings. The
+[upstream advisory review](#fork-advisory-coverage) was repeated on 2026-10-28
+and returned no reviewed or repository advisories for the three retained
+identities. The [publication evidence](releases/v0.24.0-verification.json)
+records exact package digests, source identities, consumer results and that review.
 
 ## SDK/CLI v0.23.0 publication verification (2026-09-22)
 
@@ -349,11 +377,11 @@ cannot accidentally resolve from the repository's `node_modules`.
 
 ## Check published consumers and release provenance
 
-To reproduce the repaired public v0.23.0 graph without workspace sibling
-substitutions:
+To reproduce a repaired public graph (v0.23.0 or later; v0.24.0 is the latest)
+without workspace sibling substitutions:
 
 ```sh
-node scripts/check-consumers.mjs --published-version 0.23.0 --output /tmp/manifest-published-0.23.0-check
+node scripts/check-consumers.mjs --published-version 0.24.0 --output /tmp/manifest-published-0.24.0-check
 ```
 
 This packs only the exact published SDK/CLI entry tarballs and resolves their
