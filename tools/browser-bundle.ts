@@ -5,8 +5,19 @@ import ts from 'typescript';
 /** Browser bundles parse multi-megabyte CosmJS graphs on slower CI runners. */
 export const BROWSER_BUNDLE_TIMEOUT_MS = 30_000;
 
+export interface EmittedChunk {
+  /** The chunk exactly as rolldown emits it. */
+  code: string;
+  /**
+   * Rolldown's rendered code for each module in the chunk, keyed by module id
+   * (`RenderedModule.code`; `null` when nothing of the module is rendered).
+   */
+  modules: Readonly<Record<string, string | null>>;
+}
+
 export interface BrowserBundle {
   code: string;
+  chunks: EmittedChunk[];
   modules: string[];
   unresolvedWarnings: string[];
 }
@@ -14,7 +25,14 @@ export interface BrowserBundle {
 export interface NodeOnlyImport {
   expression: string;
   specifier: string;
-  importerRegion?: string;
+  /** The module id whose rendered code accounts for the import, if any. */
+  importer?: string;
+}
+
+interface NodeOnlyReference {
+  expression: string;
+  specifier: string;
+  isRequire: boolean;
 }
 
 const BUILTIN_SPECIFIERS = new Set(
@@ -38,7 +56,7 @@ const NODE_SHIMS = new Set([
 const GUARDED_COSMJS_CRYPTO_WARNING =
   /Could not resolve ['"]crypto['"] in .*node_modules\/@cosmjs\/crypto\/build\/pbkdf2\.js(?:\s|$)/;
 
-const GUARDED_COSMJS_CRYPTO_REGIONS =
+const GUARDED_COSMJS_CRYPTO_MODULES =
   /(?:^|\/)node_modules\/@cosmjs\/crypto\/build\/(?:pbkdf2|random)\.js$/;
 
 /** Bundle one entry under browser conditions and retain unresolved-import diagnostics. */
@@ -59,6 +77,15 @@ export async function bundleForBrowser(input: string): Promise<BrowserBundle> {
     const chunks = output.filter((item) => item.type === 'chunk');
     return {
       code: chunks.map((item) => item.code).join('\n'),
+      chunks: chunks.map((item) => ({
+        code: item.code,
+        modules: Object.fromEntries(
+          Object.entries(item.modules).map(([id, rendered]) => [
+            id,
+            rendered.code,
+          ]),
+        ),
+      })),
       modules: chunks.flatMap((item) => Object.keys(item.modules)),
       unresolvedWarnings,
     };
@@ -77,16 +104,6 @@ export function unallowedBrowserWarnings(
   );
 }
 
-function importerRegionAt(code: string, offset: number): string | undefined {
-  const start = code.lastIndexOf('//#region ', offset);
-  if (start < 0 || code.lastIndexOf('//#endregion', offset) > start) {
-    return undefined;
-  }
-  const pathStart = start + '//#region '.length;
-  const pathEnd = code.indexOf('\n', pathStart);
-  return code.slice(pathStart, pathEnd < 0 ? undefined : pathEnd).trim();
-}
-
 function isNodeOnlySpecifier(specifier: string): boolean {
   return (
     specifier.startsWith('node:') ||
@@ -95,11 +112,74 @@ function isNodeOnlySpecifier(specifier: string): boolean {
   );
 }
 
+function isGuardedCosmjsCrypto(
+  reference: NodeOnlyReference,
+  importer: string,
+): boolean {
+  return (
+    reference.specifier === 'crypto' &&
+    reference.isRequire &&
+    GUARDED_COSMJS_CRYPTO_MODULES.test(importer.replaceAll('\\', '/'))
+  );
+}
+
+function sameReference(a: NodeOnlyReference, b: NodeOnlyReference): boolean {
+  return a.specifier === b.specifier && a.isRequire === b.isRequire;
+}
+
 /**
- * Find Node-only imports in emitted code, including rolldown's CJS
+ * Find Node-only imports in emitted chunks, including rolldown's CJS
  * `__require(...)` form and every bare builtin known to the running Node.
+ *
+ * Every reference in the chunk's own code is checked. A reference is
+ * attributed to a module only when that module's rendered code contains a
+ * reference of the same kind and specifier that no other module has claimed,
+ * so attribution comes from rolldown's module ids rather than from comments
+ * the bundled code could imitate. Rolldown 1.2.15 replaced the `//#region`
+ * pairs this once read with `// <id>` lines (ENG-2093), and rendered module
+ * code is not a byte-exact slice of the chunk, so references are matched by
+ * count rather than by offset. A reference no module accounts for is a leak.
+ * So is a module reference with no counterpart in the chunk, because then the
+ * rendered modules no longer describe what the chunk ships.
  */
-export function findNodeOnlyImports(code: string): NodeOnlyImport[] {
+export function findNodeOnlyImports(
+  chunks: readonly EmittedChunk[],
+): NodeOnlyImport[] {
+  const leaks: NodeOnlyImport[] = [];
+  for (const chunk of chunks) {
+    const shipped = scanNodeOnlyReferences(chunk.code).map((reference) => ({
+      reference,
+      importer: undefined as string | undefined,
+    }));
+    const unmatched: NodeOnlyImport[] = [];
+    for (const [importer, code] of Object.entries(chunk.modules)) {
+      if (!code) continue;
+      for (const reference of scanNodeOnlyReferences(code)) {
+        const match = shipped.find(
+          (entry) =>
+            entry.importer === undefined &&
+            sameReference(entry.reference, reference),
+        );
+        if (match) {
+          match.importer = importer;
+        } else {
+          const { expression, specifier } = reference;
+          unmatched.push({ expression, specifier, importer });
+        }
+      }
+    }
+    for (const { reference, importer } of shipped) {
+      if (importer !== undefined && isGuardedCosmjsCrypto(reference, importer))
+        continue;
+      const { expression, specifier } = reference;
+      leaks.push({ expression, specifier, importer });
+    }
+    leaks.push(...unmatched);
+  }
+  return leaks;
+}
+
+function scanNodeOnlyReferences(code: string): NodeOnlyReference[] {
   const source = ts.createSourceFile(
     'browser-bundle.js',
     code,
@@ -107,7 +187,7 @@ export function findNodeOnlyImports(code: string): NodeOnlyImport[] {
     false,
     ts.ScriptKind.JS,
   );
-  const leaks: NodeOnlyImport[] = [];
+  const references: NodeOnlyReference[] = [];
 
   function inspectSpecifier(
     specifierNode: ts.Expression,
@@ -117,21 +197,11 @@ export function findNodeOnlyImports(code: string): NodeOnlyImport[] {
     if (!ts.isStringLiteralLike(specifierNode)) return;
     const specifier = specifierNode.text;
     if (!isNodeOnlySpecifier(specifier)) return;
-
-    const offset = owner.getStart(source);
-    const importerRegion = importerRegionAt(code, offset);
-    const guardedCosmjsCrypto =
-      specifier === 'crypto' &&
-      isRequire &&
-      importerRegion !== undefined &&
-      GUARDED_COSMJS_CRYPTO_REGIONS.test(importerRegion.replaceAll('\\', '/'));
-    if (!guardedCosmjsCrypto) {
-      leaks.push({
-        expression: owner.getText(source),
-        specifier,
-        importerRegion,
-      });
-    }
+    references.push({
+      expression: owner.getText(source),
+      specifier,
+      isRequire,
+    });
   }
 
   function visit(node: ts.Node): void {
@@ -154,7 +224,7 @@ export function findNodeOnlyImports(code: string): NodeOnlyImport[] {
   }
 
   visit(source);
-  return leaks;
+  return references;
 }
 
 /** Positive proof that the browser crypto path was retained in the bundle. */

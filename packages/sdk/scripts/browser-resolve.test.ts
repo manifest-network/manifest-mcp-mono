@@ -95,12 +95,12 @@ describe('manifest-sdk browser resolution + Node-builtin hygiene', () => {
     it(
       `${subpath} bundles cleanly under browser conditions`,
       async () => {
-        const { code, modules, unresolvedWarnings } =
+        const { code, chunks, modules, unresolvedWarnings } =
           await bundleForBrowser(specifier);
         expect(unallowedBrowserWarnings(unresolvedWarnings)).toEqual([]);
         // A root ManifestJS import loads every codegen namespace through its CJS barrel.
         expect(manifestBarrels(modules)).toEqual([]);
-        const leaks = findNodeOnlyImports(code);
+        const leaks = findNodeOnlyImports(chunks);
         expect(leaks, JSON.stringify(leaks, null, 2)).toEqual([]);
         if (subpath === '.') expect(hasWebCryptoFallback(code)).toBe(true);
       },
@@ -164,33 +164,104 @@ describe('manifest-sdk browser resolution + Node-builtin hygiene', () => {
       "const eight = require('vm');",
       "const nine = require('crypto-browserify');",
     ].join('\n');
-    expect(findNodeOnlyImports(code).map(({ specifier }) => specifier)).toEqual(
-      [
-        'node:fs',
-        'dns',
-        'zlib',
-        'buffer',
-        'child_process',
-        'worker_threads',
-        'util',
-        'events',
-        'url',
-        'assert',
-        'vm',
-        'crypto-browserify',
-      ],
-    );
+    expect(
+      findNodeOnlyImports([{ code, modules: {} }]).map(
+        ({ specifier }) => specifier,
+      ),
+    ).toEqual([
+      'node:fs',
+      'dns',
+      'zlib',
+      'buffer',
+      'child_process',
+      'worker_threads',
+      'util',
+      'events',
+      'url',
+      'assert',
+      'vm',
+      'crypto-browserify',
+    ]);
   });
 
-  it('allows guarded crypto only inside the two measured CosmJS modules', () => {
-    const guarded = [
-      '//#region node_modules/@cosmjs/crypto/build/random.js',
-      'const crypto = __require("crypto");',
-      '//#endregion',
-    ].join('\n');
-    expect(findNodeOnlyImports(guarded)).toEqual([]);
-    expect(findNodeOnlyImports('const crypto = __require("crypto");')).toEqual([
-      expect.objectContaining({ specifier: 'crypto' }),
-    ]);
+  describe('guarded CosmJS crypto attribution', () => {
+    const call = 'const crypto = __require("crypto");';
+    const random = '/repo/node_modules/@cosmjs/crypto/build/random.js';
+    const pbkdf2 = '/repo/node_modules/@cosmjs/crypto/build/pbkdf2.js';
+    const other = '/repo/node_modules/other-package/index.js';
+
+    it('allows guarded crypto only inside the two measured CosmJS modules', () => {
+      expect(
+        findNodeOnlyImports([
+          {
+            code: `${call}\n${call}`,
+            modules: { [random]: call, [pbkdf2]: call },
+          },
+        ]),
+      ).toEqual([]);
+      expect(
+        findNodeOnlyImports([{ code: call, modules: { [other]: call } }]),
+      ).toEqual([
+        {
+          expression: '__require("crypto")',
+          specifier: 'crypto',
+          importer: other,
+        },
+      ]);
+    });
+
+    it('reports a require no module accounts for', () => {
+      expect(findNodeOnlyImports([{ code: call, modules: {} }])).toEqual([
+        { expression: '__require("crypto")', specifier: 'crypto' },
+      ]);
+      // One CosmJS module excuses one shipped call, not every identical call.
+      expect(
+        findNodeOnlyImports([
+          { code: `${call}\n${call}`, modules: { [random]: call } },
+        ]),
+      ).toEqual([{ expression: '__require("crypto")', specifier: 'crypto' }]);
+    });
+
+    it('ignores module-marker comments the bundled code could imitate', () => {
+      const spoofed = [
+        '//#region node_modules/@cosmjs/crypto/build/random.js',
+        '// node_modules/@cosmjs/crypto/build/random.js',
+        call,
+        '//#endregion',
+      ].join('\n');
+      expect(
+        findNodeOnlyImports([{ code: spoofed, modules: { [other]: spoofed } }]),
+      ).toEqual([
+        expect.objectContaining({ specifier: 'crypto', importer: other }),
+      ]);
+    });
+
+    it('allows only require("crypto") inside the CosmJS modules', () => {
+      const code = [
+        "const cp = __require('child_process');",
+        "import('crypto');",
+      ].join('\n');
+      expect(
+        findNodeOnlyImports([{ code, modules: { [random]: code } }]),
+      ).toEqual([
+        expect.objectContaining({
+          specifier: 'child_process',
+          importer: random,
+        }),
+        expect.objectContaining({ specifier: 'crypto', importer: random }),
+      ]);
+    });
+
+    it('reports a module reference the chunk does not contain', () => {
+      expect(
+        findNodeOnlyImports([{ code: '', modules: { [random]: call } }]),
+      ).toEqual([
+        {
+          expression: '__require("crypto")',
+          specifier: 'crypto',
+          importer: random,
+        },
+      ]);
+    });
   });
 });

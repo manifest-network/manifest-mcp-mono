@@ -52,7 +52,7 @@
     "ajv": "8.20.0",
     "dependency-cruiser": "18.6.0",
     "publint": "0.3.25",
-    "rolldown": "1.2.14",
+    "rolldown": "1.2.15",
     "size-limit": "14.2.0",
     "tsdown": "0.22.14",
     "typescript": "5.9.3",
