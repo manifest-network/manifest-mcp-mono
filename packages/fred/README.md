@@ -43,7 +43,7 @@ The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manif
 
 See [`packages/node/README.md`](https://github.com/manifest-network/manifest-mcp-mono/blob/main/packages/node/README.md) for CLI usage and MCP client integration.
 
-Set `MANIFEST_FRED_COMPATIBILITY` to `v0.13`, `pr240`, or a JSON provider API URL map such as `'{"https://upgraded-provider.example":"pr240"}'`. Unlisted providers remain on v0.13. An explicit `FredMCPServer({ fredCompatibility, ... })` option overrides the environment. This is operator configuration; mutation tools do not choose their protocol. The local devnet's separate `FRED_COMPATIBILITY` setting defaults to PR240.
+Set `MANIFEST_FRED_COMPATIBILITY` to `v0.13`, `pr240`, or a JSON provider API URL map such as `'{"https://upgraded-provider.example":"pr240"}'`. Unlisted providers remain on v0.13. Use `pr240` for providers running Fred v0.14, the first release with PR #240's contract, and `v0.13` for Fred v0.13.x. An explicit `FredMCPServer({ fredCompatibility, ... })` option overrides the environment. This is operator configuration; mutation tools do not choose their protocol. The local devnet's separate `FRED_COMPATIBILITY` setting defaults to PR240.
 
 ### As a library
 

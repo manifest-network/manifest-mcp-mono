@@ -294,7 +294,7 @@ try {
 
 SDK clients, MCP servers, and raw HTTP helpers default to released Fred **v0.13**. In this mode restart/update omit `Idempotency-Key` and successful results omit `idempotency_key`, preserving the legacy browser CORS contract. Supplying a key fails locally because v0.13 cannot deduplicate commands. After an uncertain response, inspect `appStatus` and release history before deliberately submitting another command; automatic replay is disabled.
 
-Opt confirmed PR #240 providers into `fredCompatibility: 'pr240'`. `createFredClient` accepts a global mode or a provider API URL map; unlisted URLs remain on v0.13. The mode is explicit because Fred exposes no reliable capability endpoint. Never use a failed mutation to discover support.
+Opt confirmed PR #240 providers into `fredCompatibility: 'pr240'`. Use `pr240` for providers running Fred v0.14, the first release with PR #240's contract, and `v0.13` for Fred v0.13.x. `createFredClient` accepts a global mode or a provider API URL map; unlisted URLs remain on v0.13. The mode is explicit because Fred exposes no reliable capability endpoint. Never use a failed mutation to discover support.
 
 ```ts
 const client = await createFredClient({
