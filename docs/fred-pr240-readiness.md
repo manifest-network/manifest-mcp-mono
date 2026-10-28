@@ -55,7 +55,9 @@ and supported layer contents; a refusal surfaces as `ImagePullFailed`, which a
 ## Client changes
 
 - SDK clients accept `fredCompatibility: 'v0.13' | 'pr240'` or a map keyed by
-  provider API URL. Unlisted providers use v0.13. Deploy and maintenance calls
+  provider API URL. Unlisted providers use v0.13. Use `pr240` for providers
+  running Fred v0.14, the first release with PR #240's contract, and `v0.13` for
+  Fred v0.13.x. Deploy and maintenance calls
   can override the configured mode. Raw restart/update helpers take the mode
   after the optional key argument and also default to v0.13.
 - Legacy restart/update omit the command header and returned key, so the v0.13
