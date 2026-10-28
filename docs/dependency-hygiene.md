@@ -13,6 +13,8 @@ Their public artifact hashes and signed provenance have been verified; ManifestJ
 verification completed locally after the CI registry-availability retries expired.
 All nine v0.23.0 packages are published with verified provenance and public
 tarballs matching the tested artifacts; see the [publication evidence](releases/v0.23.0-verification.json).
+The latest release, v0.24.0, keeps the same four artifacts and passed the same
+publication checks; see its [publication evidence](releases/v0.24.0-verification.json).
 Applications still using v0.22.0 must upgrade their directly installed monorepo
 packages together and refresh their lockfile. The immutable v0.22.0 SDK/core
 declarations are unchanged by the new release.
@@ -49,9 +51,10 @@ The historical 2026-09-21 manual-artifact consumer baseline was zero high/critic
 findings, with 11 low affected package entries for the SDK and 15 for the CLI.
 These are parent rollups of `elliptic` (`GHSA-848j-6mx2-7j84`), not independent vulnerabilities. Repository
 and consumer counts cover different graphs and are point-in-time measurements.
-That baseline is separate from the post-publication v0.23.0 consumer checks:
-the public SDK/CLI installations also retained 11/15 low entries respectively,
-with zero moderate, high or critical findings. The [release evidence](releases/v0.23.0-verification.json)
+That baseline is separate from the post-publication v0.23.0 and v0.24.0 consumer
+checks: in both, the public SDK/CLI installations retained 11/15 low entries
+respectively, with zero moderate, high or critical findings. The release evidence
+([v0.23.0](releases/v0.23.0-verification.json), [v0.24.0](releases/v0.24.0-verification.json))
 records those results; each subsequent release must run the gates again.
 The crypto migration remains ENG-808. npm audit does not automatically cover
 renamed forks under their original package names: the release/dependency-update
