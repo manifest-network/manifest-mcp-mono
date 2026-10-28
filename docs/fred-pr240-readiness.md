@@ -3,17 +3,17 @@
 [ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepared this repository
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
-generated manifest artifacts now use Fred `main`
-`4e99b8fd68da508cfc907fbcc9387b0d572080bd`. It adds
+generated manifest artifacts now use the Fred `v0.14.0-rc.1` tag
+`5f3341ed838360ddb3ead1a1fd494794abc143bc`, on `main`. It adds
 [PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
 [ENG-1055](https://linear.app/liftedinit/issue/ENG-1055),
 [PR #243](https://github.com/manifest-network/fred/pull/243), the operator
 controls of [PR #244](https://github.com/manifest-network/fred/pull/244) and
-[PR #245](https://github.com/manifest-network/fred/pull/245), and PRs #247
-through #275 to PR #240's merge.
+[PR #245](https://github.com/manifest-network/fred/pull/245), PRs #247
+through #283, and the release cut (#258) to PR #240's merge.
 Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
-requires explicit opt-in. Revalidate against Fred's released revision before
-rollout.
+requires explicit opt-in. Fred v0.14 is the first release with the PR240
+contract; revalidate against the final v0.14.0 tag before rollout.
 
 PR #243 adds tenant `410` answers with a `reason`: `backend_storage_lost` for a
 lease whose backend an operator retired as lost, and `maintenance_expired` for a
@@ -106,7 +106,7 @@ The local devnet independently defaults to `FRED_COMPATIBILITY=pr240`; this does
 not change the SDK/MCP default. Its v0.13 mode uses a separate legacy backend
 topology. Never start either mode against the other version's persisted authority.
 
-The PR240 devnet builds Go 1.26.9 and includes `placement-preflight`. CI installs a
+The PR240 devnet builds Go 1.26.10 and includes `placement-preflight`. CI installs a
 pinned compatible Docker daemon before checking the required server API floor.
 The devnet launcher seals a fresh backend storage identity and runs the backend
 natively on the Docker host under systemd. Stateful backend containers are
@@ -192,6 +192,20 @@ the devnet runs with `network_isolation: false`. PR #274 adds an operator-only
 release entry with the same manifest. PR #275 fixes adoption of v0.13 release
 histories, and PR #273 updates Fred's CI actions.
 
+Of PRs #276 through #283 and the v0.14.0-rc.1 release cut (#258), only PR #276
+is visible to tenants. Both billing-only refusals now carry
+`reason: billing_only`, with their messages unchanged, and Fred checks for a
+billing-only lease before the lease state. Because Fred acknowledges such a
+lease on sight, an upload or restore that lost that race used to find it
+ACTIVE and receive `404 lease not pending` or `409 target_not_pending`; it now
+receives the billing-only refusal. `deploy_app` matches the reason code first
+and keeps the exact-text match for v0.13.1 and v0.13.2, which already ship
+billing-only SKUs without the reason. A restore refusal still keeps the restore
+POST's in-doubt handling. PR #277 lets a container running as root write its
+stateful `VOLUME`; PRs #282 and #283 fix a worker-drain race and a test. PR #279
+raises Fred's Go floor to 1.26.10, so the devnet builder moves with it. The
+published manifest schema and limits are unchanged.
+
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.
 
@@ -216,8 +230,9 @@ maintenance headers fit each provider's CORS policy; these are not a browser run
 
 `e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
 the latest live status/release observation. That observation records its Fred
-revision and run; it now comes from the green full E2E run at Fred `main`
-`4e99b8f`, whose key sets match the `9388c86` and `9c063b4` observations. Those status and
+revision and run; it now comes from the green full E2E run at Fred
+`v0.14.0-rc.1` (`5f3341e`), whose key sets match the `4e99b8f`, `9388c86` and
+`9c063b4` observations. Those status and
 diagnostics key sets add only `terminal_budget` to the earlier `315ed5a`,
 `8a26371` and `4f00091` observations. The golden lists that key as conditional,
 because the v0.13 leg never sends it. Replace the

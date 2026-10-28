@@ -93,10 +93,10 @@
   },
 
   "live_observations": {
-    "fred_ref": "4e99b8fd68da508cfc907fbcc9387b0d572080bd",
-    "mono_ref": "d9ce7433582ce9fe5d91f30c0f07403720d62fe2",
-    "run_url": "https://github.com/manifest-network/manifest-mcp-mono/actions/runs/39822445175",
-    "scope": "Healthy ACTIVE status, release, and diagnostics projection keys observed in the full E2E suite's live lifecycle tests (PR240 leg, Fred main after PRs #242 through #275; a manually dispatched run on mono main). The key sets are unchanged from the 9388c86 and 9c063b4 observations: Fred PR #252's terminal_budget appears on a healthy lease's status and in mono's diagnostics projection, and is recorded under `sometimes` because the v0.13 leg of the same run never sends it. Fred PRs #268 through #275 (billing-only SKUs, per-lease networks, runtime refresh) add no key to these surfaces. Other conditional-field allowlists retain their original baseline provenance. The same run's devnet restart step preserved existing storage and placement authority on both legs, and each leg passed 265 tests with 2 skipped.",
+    "fred_ref": "5f3341ed838360ddb3ead1a1fd494794abc143bc",
+    "mono_ref": "f055587f1e1c1e42923bb12dd855533bfb99594b",
+    "run_url": "https://github.com/manifest-network/manifest-mcp-mono/actions/runs/40718431931",
+    "scope": "Healthy ACTIVE status, release, and diagnostics projection keys observed in the full E2E suite's live lifecycle tests (PR240 leg, Fred v0.14.0-rc.1 on main, after PRs #242 through #283 and the release cut #258; a manually dispatched run on the PR #277 branch). The key sets are unchanged from the 4e99b8f, 9388c86 and 9c063b4 observations: Fred PR #252's terminal_budget appears on a healthy lease's status and in mono's diagnostics projection, and is recorded under `sometimes` because the v0.13 leg of the same run never sends it. Fred PRs #268 through #283 (billing-only SKUs and their reason code, per-lease networks, runtime refresh) add no key to these surfaces. Other conditional-field allowlists retain their original baseline provenance. The same run's devnet restart step preserved existing storage and placement authority on both legs, and each leg passed 265 tests with 2 skipped.",
     "status": [
       "lease_uuid",
       "meta_hash_hex",

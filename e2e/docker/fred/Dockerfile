@@ -4,10 +4,10 @@
 # `golang:1.26-alpine`. These images set GOTOOLCHAIN=local, so the go command will
 # not download a newer toolchain to satisfy the directive — a builder even one patch
 # behind fails outright at `go mod download` below with
-#   go: go.mod requires go >= 1.26.9 (running go 1.26.8; GOTOOLCHAIN=local)
+#   go: go.mod requires go >= 1.26.10 (running go 1.26.9; GOTOOLCHAIN=local)
 # rather than degrading gracefully. Bump this line in the same commit as any
 # submodules/fred gitlink move whose go.mod floor advanced.
-FROM golang:1.26.9-alpine AS builder
+FROM golang:1.26.10-alpine AS builder
 
 RUN apk add --no-cache ca-certificates build-base git
 

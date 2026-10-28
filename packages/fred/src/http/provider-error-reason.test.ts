@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BACKEND_STORAGE_LOST,
   BILLING_ONLY_PAYLOAD,
+  BILLING_ONLY_PAYLOAD_V013,
   CAPACITY_RESERVED,
   KEY_REQUIRED,
   MAINTENANCE_EXPIRED,
@@ -28,6 +29,7 @@ describe('providerErrorReason', () => {
     [MAINTENANCE_EXPIRED, 'maintenance_expired'],
     [BACKEND_STORAGE_LOST, 'backend_storage_lost'],
     [CAPACITY_RESERVED, 'maintenance_capacity_reserved'],
+    [BILLING_ONLY_PAYLOAD, 'billing_only'],
   ])('reads the reason from Fred body %#', (response, reason) => {
     expect(providerErrorReason(answer(response.status, response.text))).toBe(
       reason,
@@ -149,16 +151,28 @@ describe('isIdempotencyKeyRequired', () => {
 });
 
 describe('isBillingOnlyPayloadRefusal', () => {
-  it('matches the PR #268 refusal of a billing-only lease payload', () => {
+  it.each([
+    ['Fred v0.14, by its reason code', BILLING_ONLY_PAYLOAD],
+    ['Fred v0.13.1 and v0.13.2, by its exact text', BILLING_ONLY_PAYLOAD_V013],
+  ])(
+    'matches the refusal of a billing-only lease payload from %s',
+    (_label, response) => {
+      expect(
+        isBillingOnlyPayloadRefusal(answer(response.status, response.text)),
+      ).toBe(true);
+    },
+  );
+
+  it('branches on the reason code, not the message (Fred PR #276)', () => {
     expect(
       isBillingOnlyPayloadRefusal(
-        answer(BILLING_ONLY_PAYLOAD.status, BILLING_ONLY_PAYLOAD.text),
+        answer(400, '{"error":"reworded","code":400,"reason":"billing_only"}'),
       ),
     ).toBe(true);
   });
 
   it.each([
-    // The restore refusal is a different answer.
+    // Without a reason code, v0.13.1's restore refusal is a different answer.
     [
       400,
       '{"error":"lease is billing-only and cannot be restored into","code":400}',
@@ -167,6 +181,8 @@ describe('isBillingOnlyPayloadRefusal', () => {
       503,
       '{"error":"lease is billing-only and does not accept a payload","code":503}',
     ],
+    [409, '{"error":"x","code":409,"reason":"billing_only"}'],
+    [400, '{"error":"x","code":400,"reason":"billing_only_soon"}'],
     [400, '{"error":"lease is billing-only and does not accept a payload"}'],
     [400, 'lease is billing-only and does not accept a payload'],
   ])('does not match status %i with body %j', (status, body) => {
