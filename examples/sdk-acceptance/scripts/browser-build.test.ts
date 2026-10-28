@@ -24,7 +24,8 @@ import {
  *
  * The SECONDARY guard scans emitted import/require specifiers against Node's complete builtin list,
  * including rolldown's `__require(...)` CJS form. The two measured guarded CosmJS crypto fallbacks
- * are attributed by their emitted source regions; no package-wide or specifier-wide exception exists.
+ * are attributed by rolldown's per-module rendered code, keyed by module id, never by comments in
+ * the emitted chunk; no package-wide or specifier-wide exception exists.
  *
  * The POSITIVE guard proves the Web-Crypto path actually shipped (the cosmjs guarded crypto degrades
  * to `globalThis.crypto`/`getRandomValues`), so a green build is a real browser bundle, not a node shim.
@@ -34,12 +35,12 @@ describe('sdk-acceptance browser build (fail-closed; no UNGUARDED node-only)', (
   it(
     'bundles for the browser with no unallowed node-only resolution + clean chunk',
     async () => {
-      const { code, unresolvedWarnings } = await bundleForBrowser(
+      const { code, chunks, unresolvedWarnings } = await bundleForBrowser(
         new URL('../dist/main.js', import.meta.url).pathname,
       );
 
       expect(unallowedBrowserWarnings(unresolvedWarnings)).toEqual([]);
-      const leaks = findNodeOnlyImports(code);
+      const leaks = findNodeOnlyImports(chunks);
       expect(leaks, JSON.stringify(leaks, null, 2)).toEqual([]);
 
       // POSITIVE: prove the Web-Crypto path shipped (not a node-shim) — the cosmjs guarded crypto degrades here.
