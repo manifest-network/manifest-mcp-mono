@@ -16,9 +16,15 @@ const PROVIDER_ERROR_REASON = /^[a-z][a-z0-9_]{0,63}$/;
 const IDEMPOTENCY_KEY_REQUIRED =
   'Idempotency-Key header must occur exactly once';
 
-/** Fred's refusal of a billing-only lease's payload since PR #268 (`internal/api/payload.go`). */
+/**
+ * Fred's refusal of a billing-only lease's payload since PR #268 (`internal/api/payload.go`),
+ * which released Fred v0.13.1 and v0.13.2 send without a `reason`.
+ */
 const BILLING_ONLY_PAYLOAD_REFUSED =
   'lease is billing-only and does not accept a payload';
+
+/** The `reason` Fred v0.14 attaches to its billing-only refusals (PR #276). */
+const BILLING_ONLY_REASON = 'billing_only';
 
 interface FredErrorBody {
   readonly status: number;
@@ -91,9 +97,19 @@ export function isIdempotencyKeyRequired(error: unknown): boolean {
  * lease is billing-only there (Fred PR #268): it bills the lease but delivers
  * the service outside Fred, so it never deploys a manifest to it. Fred
  * acknowledges such a lease as soon as it sees it, which starts its billing.
- * The refusal carries no `reason`, so it is recognized by its exact text.
+ *
+ * Fred v0.14 marks the refusal with `reason: billing_only` (PR #276), and
+ * refuses as billing-only in any lease state, so an upload that finds the
+ * lease already ACTIVE gets this answer instead of `404 lease not pending`.
+ * v0.13.1 and v0.13.2 send the same text without a reason, so the exact text
+ * is still accepted. Fred sends the same reason when it refuses a restore into
+ * such a lease, so pass only a payload upload's answer.
  */
 export function isBillingOnlyPayloadRefusal(error: unknown): boolean {
   const body = fredErrorBody(error);
-  return body?.status === 400 && body.error === BILLING_ONLY_PAYLOAD_REFUSED;
+  return (
+    body?.status === 400 &&
+    (body.reason === BILLING_ONLY_REASON ||
+      body.error === BILLING_ONLY_PAYLOAD_REFUSED)
+  );
 }

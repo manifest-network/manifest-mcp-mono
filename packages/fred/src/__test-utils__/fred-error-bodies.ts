@@ -1,7 +1,7 @@
 /**
  * Fred's exact tenant error bodies (`internal/api/handlers.go` and
- * `internal/api/payload.go` at the pinned submodule, Fred PRs #240, #242, #243
- * and #268). Go's JSON encoder appends the
+ * `internal/api/payload.go` at the pinned submodule, Fred PRs #240, #242, #243,
+ * #268 and #276). Go's JSON encoder appends the
  * trailing newline. Each is served as a probe step so the real transport builds
  * the `ProviderApiError` the client parses.
  */
@@ -21,6 +21,12 @@ export const KEY_REQUIRED = fredError(
 
 /** A payload upload for a lease whose SKUs are all billing-only at the provider. */
 export const BILLING_ONLY_PAYLOAD = fredError(
+  400,
+  '{"error":"lease is billing-only and does not accept a payload","code":400,"reason":"billing_only"}',
+);
+
+/** The same refusal from Fred v0.13.1 and v0.13.2, which send no `reason`. */
+export const BILLING_ONLY_PAYLOAD_V013 = fredError(
   400,
   '{"error":"lease is billing-only and does not accept a payload","code":400}',
 );

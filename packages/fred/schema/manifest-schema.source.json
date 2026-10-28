@@ -1,7 +1,7 @@
 {
   "source": "submodules/fred/docs/manifest-schema.json",
   "limitsSource": "submodules/fred/internal/backend/shared/manifest/manifest.go",
-  "fredCommit": "4e99b8fd68da508cfc907fbcc9387b0d572080bd",
+  "fredCommit": "5f3341ed838360ddb3ead1a1fd494794abc143bc",
   "sha256": "c01b96f266b14b5abb7977c9ba8a09be64653ceb74ba96f737327fa2fed83db3",
   "generator": {
     "ajv": "8.20.0"

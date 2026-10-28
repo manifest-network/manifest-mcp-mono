@@ -52,7 +52,10 @@ import {
   makeMockClientManager,
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { BILLING_ONLY_PAYLOAD } from '../__test-utils__/fred-error-bodies.js';
+import {
+  BILLING_ONLY_PAYLOAD,
+  BILLING_ONLY_PAYLOAD_V013,
+} from '../__test-utils__/fred-error-bodies.js';
 import { unreadableErrors } from '../__test-utils__/unreadable-errors.js';
 import type { FredCompatibilityConfig } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
@@ -1125,43 +1128,51 @@ describe('deployManifest', () => {
    * billed) as soon as the provider sees it, and its payload is refused. No
    * retry can deploy it, so the error must say why and that billing started,
    * not just relay the provider's text under the generic cleanup advice.
+   * Fred v0.14 adds `reason: billing_only` (PR #276); v0.13.1 and v0.13.2 send
+   * the same text without it.
    */
-  it('a billing-only payload refusal explains the SKU and that billing started', async () => {
-    const cm = makeMockClientManager({
-      queryClient: makeQueryClient(),
-      address: 'manifest1tenant',
-    });
-    routeWire({ data: BILLING_ONLY_PAYLOAD });
+  it.each([
+    ['v0.14', BILLING_ONLY_PAYLOAD],
+    ['v0.13.1', BILLING_ONLY_PAYLOAD_V013],
+  ])(
+    'a Fred %s billing-only payload refusal explains the SKU and that billing started',
+    async (_label, refusal) => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      routeWire({ data: refusal });
 
-    const thrown = await deployManifest(
-      await ctx(cm),
-      {
-        manifest: singleManifest(),
-        sku: { kind: 'byName', size: 'docker-micro' },
-      },
-      {},
-    ).catch((e: unknown) => e as any);
+      const thrown = await deployManifest(
+        await ctx(cm),
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        {},
+      ).catch((e: unknown) => e as any);
 
-    expect(thrown).toBeInstanceOf(ManifestMCPError);
-    expect(thrown.message).toContain('Deploy partially succeeded:');
-    expect(thrown.message).toContain(
-      'every SKU it uses is billing-only at this provider',
-    );
-    expect(thrown.message).toContain('ACTIVE and billing');
-    expect(thrown.message).not.toContain('if needed');
-    expect(thrown.details).toMatchObject({
-      partial: true,
-      failedStep: 'upload',
-      billing_only: true,
-      lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
-      next_step: expect.stringContaining(
-        'close_lease({ lease_uuid: "550e8400-e29b-41d4-a716-446655440000" })',
-      ),
-    });
-    expect(thrown.details.readiness_unconfirmed).toBeUndefined();
-    // The refusal is final: nothing polls for a deployment that cannot start.
-    expect(wire.calls.some((c) => c.url.endsWith('/status'))).toBe(false);
-  });
+      expect(thrown).toBeInstanceOf(ManifestMCPError);
+      expect(thrown.message).toContain('Deploy partially succeeded:');
+      expect(thrown.message).toContain(
+        'every SKU it uses is billing-only at this provider',
+      );
+      expect(thrown.message).toContain('ACTIVE and billing');
+      expect(thrown.message).not.toContain('if needed');
+      expect(thrown.details).toMatchObject({
+        partial: true,
+        failedStep: 'upload',
+        billing_only: true,
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        next_step: expect.stringContaining(
+          'close_lease({ lease_uuid: "550e8400-e29b-41d4-a716-446655440000" })',
+        ),
+      });
+      expect(thrown.details.readiness_unconfirmed).toBeUndefined();
+      // The refusal is final: nothing polls for a deployment that cannot start.
+      expect(wire.calls.some((c) => c.url.endsWith('/status'))).toBe(false);
+    },
+  );
 
   it('another 400 at the upload step keeps the generic cleanup advice', async () => {
     const cm = makeMockClientManager({
