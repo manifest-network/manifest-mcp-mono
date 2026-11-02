@@ -45,8 +45,8 @@ export function deriveAppNameFromImage(image: string): string {
   // Collapse consecutive hyphens
   name = name.replace(/-{2,}/g, '-');
 
-  // Trim leading/trailing hyphens
-  name = name.replace(/^-+|-+$/g, '');
+  // Trim leading/trailing hyphens (runs are already collapsed to one)
+  name = name.replace(/^-|-$/g, '');
 
   // Truncate
   if (name.length > MAX_NAME_LENGTH) {

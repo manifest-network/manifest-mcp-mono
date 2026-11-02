@@ -4,6 +4,7 @@ import {
   ManifestMCPErrorCode,
   type TransportErrorDetails,
 } from '../types.js';
+import { trimTrailingSlashes } from './trailing-slashes.js';
 import { isTransportTimeout } from './transport-timeout.js';
 
 const chainIdSchema = z.string().min(1).max(256);
@@ -61,7 +62,7 @@ async function verifyChainIdentity(
   try {
     const response = await fetchFn(
       rest
-        ? `${endpoint.replace(/\/+$/, '')}/cosmos/base/tendermint/v1beta1/node_info`
+        ? `${trimTrailingSlashes(endpoint)}/cosmos/base/tendermint/v1beta1/node_info`
         : endpoint,
       {
         signal,

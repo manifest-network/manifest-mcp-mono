@@ -57,6 +57,15 @@ describe('validateProviderUrl', () => {
     );
   });
 
+  // The API URL comes from an on-chain provider record. The ledger caps it at 2048 characters,
+  // but a hostile RPC/LCD or a direct SDK caller is not bound by that cap.
+  it('trims in linear time when the path has a long interior slash run', () => {
+    const url = `https://example.com/${'/'.repeat(100_000)}x`;
+    const started = performance.now();
+    expect(validateProviderUrl(url)).toBe(url);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
   it('accepts HTTP localhost ONLY with allowLoopback opt-in', () => {
     expect(
       validateProviderUrl('http://localhost:8080', { allowLoopback: true }),
