@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **core, fred, sdk:** trailing slashes are now stripped from URLs in linear time. The previous `/\/+$/` regex was quadratic on a URL with a long run of slashes in its path (CodeQL `js/polynomial-redos`): a 100,000-character run blocked the event loop for about 5.7 seconds. The most exposed copy was in `validateProviderUrl`, which receives the provider API URL from an on-chain record. The ledger caps that URL at 2,048 characters, where the cost is about 2.5 ms, but a hostile RPC or LCD endpoint, or an application calling `validateProviderUrl` directly, is not held to that cap. The same fix covers Fred compatibility-map lookups, faucet URLs and the REST chain-identity check. `deriveAppNameFromImage` now trims a single leading or trailing hyphen, which gives the same result because hyphen runs are already collapsed. The SDK `/deploy` and root-client size budgets rise by the measured 10 and 14 gzip bytes.
+- **deps:** refresh the locked transitive `follow-redirects` from 1.16.1 to 1.16.2 within `axios`'s existing `^1.16.0` range, clearing the high-severity [credential-forwarding advisory](https://github.com/advisories/GHSA-mrwp-f3q8-3g9p) that fails the dependency audit. No override is added. Consumers should refresh their own lockfiles; the repository lockfile is not shipped as a consumer constraint.
+
 ## [0.24.0] - 2026-10-28
 
 ### Migration notes

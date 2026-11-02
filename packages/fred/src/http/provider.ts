@@ -7,6 +7,7 @@ import {
   isIpLiteral,
 } from '@manifest-network/manifest-mcp-core/ssrf';
 import { type output, safeParse, type ZodType } from 'zod';
+import { trimTrailingSlashes } from '../trailing-slashes.js';
 import {
   LeaseConnectionResponseSchema,
   ProviderHealthResponseSchema,
@@ -371,14 +372,14 @@ export function validateProviderUrl(
   }
 
   if (parsed.protocol === 'https:') {
-    return url.replace(/\/+$/, '');
+    return trimTrailingSlashes(url);
   }
   if (
     parsed.protocol === 'http:' &&
     LOCALHOST_HOSTS.has(parsed.hostname) &&
     opts.allowLoopback
   ) {
-    return url.replace(/\/+$/, '');
+    return trimTrailingSlashes(url);
   }
   throw new ProviderApiError(
     0,

@@ -28,6 +28,13 @@ describe('Fred compatibility selection', () => {
     );
   });
 
+  it('canonicalizes a provider URL with a long interior slash run in linear time', () => {
+    const url = `https://fred.example/${'/'.repeat(100_000)}api/`;
+    const started = performance.now();
+    expect(resolveFredCompatibility({ [url]: 'pr240' }, url)).toBe('pr240');
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
   it('lets an explicit call override either configuration shape', () => {
     expect(resolveFredCompatibility('pr240', undefined, 'v0.13')).toBe('v0.13');
     expect(resolveFredCompatibility({}, undefined, 'pr240')).toBe('pr240');

@@ -2,6 +2,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import { trimTrailingSlashes } from './trailing-slashes.js';
 
 /** Select the provider contract explicitly; never infer it from a failed POST. */
 export type FredCompatibility = 'v0.13' | 'pr240';
@@ -24,7 +25,7 @@ function providerKey(value: string): string {
   try {
     const url = new URL(value);
     if (url.protocol === 'http:' || url.protocol === 'https:') {
-      return url.href.replace(/\/+$/, '');
+      return trimTrailingSlashes(url.href);
     }
   } catch {
     // Configuration diagnostics must not expose credentials from a malformed URL.

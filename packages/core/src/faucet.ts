@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { trimTrailingSlashes } from './internals/trailing-slashes.js';
 import { isTransportTimeout } from './internals/transport-timeout.js';
 import { logger } from './logger.js';
 import {
@@ -48,7 +49,7 @@ export async function fetchFaucetStatus(
   faucetUrl: string,
   fetchFn: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<FaucetStatusResponse> {
-  const base = faucetUrl.replace(/\/+$/, '');
+  const base = trimTrailingSlashes(faucetUrl);
   const url = `${base}/status`;
   const deadline = AbortSignal.timeout(10_000);
   let res: Response;
@@ -117,7 +118,7 @@ export async function requestFaucetCredit(
   denom: string,
   fetchFn: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<FaucetDripResult> {
-  const base = faucetUrl.replace(/\/+$/, '');
+  const base = trimTrailingSlashes(faucetUrl);
   const url = `${base}/credit`;
   try {
     const res = await fetchFn(url, {

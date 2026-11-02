@@ -59,6 +59,11 @@ describe('deriveAppNameFromImage', () => {
     expect(deriveAppNameFromImage('-foo-')).toBe('foo');
   });
 
+  it('leading/trailing hyphen runs trimmed after collapsing', () => {
+    expect(deriveAppNameFromImage('__-.foo.-__')).toBe('foo');
+    expect(deriveAppNameFromImage('----')).toBe('');
+  });
+
   it('truncation does not leave trailing hyphen', () => {
     // 30 a's + hyphen + more chars -> truncated at 32, trailing hyphen trimmed
     const img = `${'a'.repeat(30)}-${'b'.repeat(10)}`;
