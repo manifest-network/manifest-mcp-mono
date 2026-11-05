@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **e2e:** pin the devnet Fred to the Fred `v0.14.1` tag (`aa138cf`, on `main`). The previous pin, `5f3341e`, is both `v0.14.0-rc.1` and the final `v0.14.0`. v0.14.1 adds one tenant-visible fix, Fred PR #285 (ENG-2117): a payload upload and a restore can no longer both take the same lease. An upload into a lease a restore owns is refused with `409 reason: restore_in_progress`, a restore into a lease that already holds a payload with `409 reason: target_has_payload`, an upload into a lease that already has a deployment with `409`, and one into a lease whose placement awaits operator repair with `503`. `deploy_app` uploads only into the lease it just created and `restore_app` never uploads, so neither reaches these refusals on its own; an upload refusal is still reported as an upload failure, and a restore refusal keeps the restore POST's in-doubt handling. The published manifest schema, limits and Go floor are unchanged.
+
 ### Security
 
 - **core, fred, sdk:** trailing slashes are now stripped from URLs in linear time. The previous `/\/+$/` regex was quadratic on a URL with a long run of slashes in its path (CodeQL `js/polynomial-redos`): a 100,000-character run blocked the event loop for about 5.7 seconds. The most exposed copy was in `validateProviderUrl`, which receives the provider API URL from an on-chain record. The ledger caps that URL at 2,048 characters, where the cost is about 2.5 ms, but a hostile RPC or LCD endpoint, or an application calling `validateProviderUrl` directly, is not held to that cap. The same fix covers Fred compatibility-map lookups, faucet URLs and the REST chain-identity check. `deriveAppNameFromImage` now trims a single leading or trailing hyphen, which gives the same result because hyphen runs are already collapsed. The SDK `/deploy` and root-client size budgets rise by the measured 10 and 14 gzip bytes.

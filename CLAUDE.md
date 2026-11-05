@@ -61,8 +61,8 @@ That pin deliberately tracks Fred's unreleased `main`, not a release tag — mon
 a Fred wire change before providers run it (ENG-638). Do not assume a pin is a release, or even on
 `main`: an interim pin may be an open Fred PR head, and a squash merge leaves that head off `main`,
 so re-pin to the merge commit once it lands, then re-run `sync:fred-manifest-schema` and the live
-e2e. It is currently the Fred `v0.14.0-rc.1` tag `5f3341e` on `main` (PRs #242 through #283 on top
-of #240, plus the release cut #258). Run
+e2e. It is currently the Fred `v0.14.1` tag `aa138cf` on `main` (PRs #242 through #286 on top
+of #240; `v0.14.0` and `v0.14.0-rc.1` are both `5f3341e`). Run
 `git submodule update --init --recursive` in a fresh worktree and after pulling a gitlink change: a
 stale on-disk checkout silently makes e2e build a different Fred than the one recorded.
 Fred's deployment-manifest contract is vendored under `packages/fred/schema/` from that same

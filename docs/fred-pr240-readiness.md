@@ -3,17 +3,17 @@
 [ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepared this repository
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
-generated manifest artifacts now use the Fred `v0.14.0-rc.1` tag
-`5f3341ed838360ddb3ead1a1fd494794abc143bc`, on `main`. It adds
+generated manifest artifacts now use the Fred `v0.14.1` tag
+`aa138cf5eefe201b70b6ee63a8c99401d03846d6`, on `main`. It adds
 [PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
 [ENG-1055](https://linear.app/liftedinit/issue/ENG-1055),
 [PR #243](https://github.com/manifest-network/fred/pull/243), the operator
 controls of [PR #244](https://github.com/manifest-network/fred/pull/244) and
 [PR #245](https://github.com/manifest-network/fred/pull/245), PRs #247
-through #283, and the release cut (#258) to PR #240's merge.
+through #286, and the release cuts (#258, #286) to PR #240's merge.
 Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
 requires explicit opt-in. Fred v0.14 is the first release with the PR240
-contract; revalidate against the final v0.14.0 tag before rollout.
+contract. The final `v0.14.0` tag is the `v0.14.0-rc.1` commit `5f3341e`.
 
 PR #243 adds tenant `410` answers with a `reason`: `backend_storage_lost` for a
 lease whose backend an operator retired as lost, and `maintenance_expired` for a
@@ -207,6 +207,17 @@ POST's in-doubt handling. PR #277 lets a container running as root write its
 stateful `VOLUME`; PRs #282 and #283 fix a worker-drain race and a test. PR #279
 raises Fred's Go floor to 1.26.10, so the devnet builder moves with it. The
 published manifest schema and limits are unchanged.
+
+v0.14.1 adds one tenant-visible fix, PR #285 (ENG-2117): a payload upload and a
+restore can no longer both take the same lease. An upload into a lease a restore
+owns is refused with `409 reason: restore_in_progress`, and a restore into a
+lease that already holds a payload with `409 reason: target_has_payload`. An
+upload into a lease that already has a deployment is refused with `409`, and one
+into a lease whose placement awaits operator repair with `503`. `deploy_app`
+uploads only into the lease it just created and `restore_app` never uploads, so
+neither reaches these refusals on its own. An upload refusal is reported as an
+upload failure, and a restore refusal keeps the restore POST's in-doubt
+handling. The manifest schema, limits and Go floor are unchanged.
 
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.
