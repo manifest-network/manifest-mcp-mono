@@ -41,6 +41,14 @@ const GO_LIMITS = {
   maxLabels: 'MaxLabels',
   dependsOnMaxDepth: 'dependsOnMaxDepth',
 };
+// Constants Fred derives from a tracked cap. They add no admission rule, so they
+// are acknowledged instead of recorded, but only while the declaration is exactly
+// this expression: one detached from its tracked cap may be a new limit.
+const GO_DERIVED_LIMITS = {
+  // Sizes docker-backend's close budget: a chain of dependsOnMaxDepth links
+  // spans one more service (Fred #290).
+  MaxDependencyLevels: 'dependsOnMaxDepth + 1',
+};
 const GENERATED_LIMIT_KEYS = [
   ...Object.keys(GO_LIMITS),
   'minStopGracePeriodNanoseconds',
@@ -218,6 +226,28 @@ function parsePlainIntegerDeclaration(code, goName, errors) {
   return value;
 }
 
+function checkDerivedDeclaration(code, goName, expected, errors) {
+  const matches = [
+    ...code.matchAll(
+      new RegExp(`^\\s*(?:const\\s+)?${goName}\\s*=\\s*(.*?)\\s*$`, 'gm'),
+    ),
+  ];
+  // Fred dropping a derived constant cannot introduce a limit.
+  if (matches.length === 0) return;
+  if (matches.length > 1) {
+    errors.push(
+      `${goName} must have at most one declaration in ${limitsSourceRelative}; found ${matches.length}`,
+    );
+    return;
+  }
+  const expression = matches[0][1].trim().replace(/\s+/g, ' ');
+  if (expression !== expected) {
+    errors.push(
+      `${goName} must stay ${JSON.stringify(expected)} in ${limitsSourceRelative}; got ${JSON.stringify(expression)}`,
+    );
+  }
+}
+
 const GO_DURATION_UNITS = {
   Nanosecond: 1,
   Microsecond: 1_000,
@@ -290,7 +320,10 @@ export function parseGoLimits(source, errors) {
           /(?:Limit|Depth)$/.test(name),
       ),
   );
-  const knownLimitNames = new Set(Object.values(GO_LIMITS));
+  const knownLimitNames = new Set([
+    ...Object.values(GO_LIMITS),
+    ...Object.keys(GO_DERIVED_LIMITS),
+  ]);
   const unknownLimitNames = [...declaredLimitNames].filter(
     (name) => !knownLimitNames.has(name),
   );
@@ -298,6 +331,9 @@ export function parseGoLimits(source, errors) {
     errors.push(
       `untracked Fred limit-like constants in ${limitsSourceRelative}: ${unknownLimitNames.join(', ')}`,
     );
+  }
+  for (const [goName, expected] of Object.entries(GO_DERIVED_LIMITS)) {
+    checkDerivedDeclaration(code, goName, expected, errors);
   }
 
   const limits = {};
