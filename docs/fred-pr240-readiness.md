@@ -3,14 +3,15 @@
 [ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepared this repository
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
-generated manifest artifacts now use the Fred `v0.14.1` tag
-`aa138cf5eefe201b70b6ee63a8c99401d03846d6`, on `main`. It adds
+generated manifest artifacts now use Fred `main` at
+`ea12d3b95669f7cee5bfe3b2aaf09709098852a8` (PR #298), 12 commits after the
+`v0.14.1` tag `aa138cf`. It adds
 [PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
 [ENG-1055](https://linear.app/liftedinit/issue/ENG-1055),
 [PR #243](https://github.com/manifest-network/fred/pull/243), the operator
 controls of [PR #244](https://github.com/manifest-network/fred/pull/244) and
 [PR #245](https://github.com/manifest-network/fred/pull/245), PRs #247
-through #286, and the release cuts (#258, #286) to PR #240's merge.
+through #298, and the release cuts (#258, #286) to PR #240's merge.
 Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
 requires explicit opt-in. Fred v0.14 is the first release with the PR240
 contract. The final `v0.14.0` tag is the `v0.14.0-rc.1` commit `5f3341e`.
@@ -219,6 +220,27 @@ neither reaches these refusals on its own. An upload refusal is reported as an
 upload failure, and a restore refusal keeps the restore POST's in-doubt
 handling. The manifest schema, limits and Go floor are unchanged.
 
+PRs #287 through #298 follow v0.14.1 on `main` and are unreleased. One is
+tenant-visible, PR #298 (ENG-2130): a `REJECTED` lease with retained data is
+now an eligible restore source alongside `CLOSED` and `EXPIRED`. Released
+providers, v0.14.1 included, still answer such a restore with
+`404 no retained data found`. `restore_app` does not check the source's chain
+state, so it needs no change. Until a Fred release carries PR #298, `app_status`
+keeps querying the provider only for `PENDING`, `ACTIVE`, `CLOSED` and `EXPIRED`
+leases, and the tool text keeps naming `CLOSED` and `EXPIRED` sources. The other
+PRs are provider-side: panic boundaries around maintenance recovery and chain
+inventory reads (#287), frozen v0.13 retention sizing (#288), a non-zero
+providerd exit when a component fails (#289), closes that outlive their request
+with a `503 lifecycle_pending` answer to a still-running `/deprovision` (#290),
+`klauspost/compress` v1.20.3 (#291), counter series exported from startup
+(#292, #294), a test fix (#293), redispatched deaths that race Ready after a
+restart, update or restore (#295), no timeout rejection after an authenticated
+Success callback (#296), and acknowledgment batches that retry their eligible
+members (#297). The manifest schema and Go floor are unchanged. `manifest.go`
+adds `MaxDependencyLevels`, defined as `dependsOnMaxDepth + 1` to size
+docker-backend's close budget. The schema sync acknowledges it as a derived
+constant instead of recording a new limit, and fails if the definition changes.
+
 Run builds and the unit suite sequentially: architecture tests temporarily create
 source probes, and building during those tests can collect the probes.
 
@@ -243,9 +265,9 @@ maintenance headers fit each provider's CORS policy; these are not a browser run
 
 `e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
 the latest live status/release observation. That observation records its Fred
-revision and run; it now comes from the green full E2E run at Fred
-`v0.14.1` (`aa138cf`), whose key sets match the `5f3341e`, `4e99b8f`, `9388c86`
-and `9c063b4` observations. Those status and
+revision and run; it now comes from the green full E2E run at Fred `main`
+`ea12d3b`, whose key sets match the `aa138cf` (v0.14.1), `5f3341e`, `4e99b8f`,
+`9388c86` and `9c063b4` observations. Those status and
 diagnostics key sets add only `terminal_budget` to the earlier `315ed5a`,
 `8a26371` and `4f00091` observations. The golden lists that key as conditional,
 because the v0.13 leg never sends it. Replace the

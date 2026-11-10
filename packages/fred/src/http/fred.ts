@@ -233,7 +233,8 @@ export async function updateLease(
  * lease. Token must be scoped to the NEW lease. Returns 202 {status:"provisioning"};
  * fetchJsonChecked throws ProviderApiError for any non-2xx or malformed success body.
  * restoreApp treats every such error as unknown adoption: HTTP status/prose cannot
- * authorize compensation. Fred's answer space here: 404 not-retained, 409 not PENDING or already
+ * authorize compensation. Fred's answer space here: 404 not-retained (through v0.14.1 also any
+ * REJECTED source; Fred #298 makes a retained one eligible), 409 not PENDING or already
  * provisioned (since v0.14.1 also `target_has_payload`, a target that received an upload),
  * 422 demote-exceeds-tier OR any other refusal code the backend authored
  * (widened in ENG-620 — a 422 no longer implies "demote"), 429 throttled, 502 the

@@ -31,6 +31,7 @@ const (
   MaxLabels = 128
 )
 const dependsOnMaxDepth = 10
+const MaxDependencyLevels = dependsOnMaxDepth + 1
 
 func validateStop(d time.Duration) error {
   if d < time.Second {
@@ -195,6 +196,52 @@ describe('Fred manifest Go-limit parser', () => {
       /untracked Fred limit-like constants.*serviceMaxDepth/,
     );
     assert.match(errors.join('\n'), /maxServices/);
+  });
+
+  it('acknowledges a derived constant without recording it, or requiring it', () => {
+    for (const source of [
+      VALID_GO_SOURCE,
+      VALID_GO_SOURCE.replace(
+        'const MaxDependencyLevels = dependsOnMaxDepth + 1\n',
+        '',
+      ),
+    ]) {
+      const errors = [];
+      assert.deepEqual(parseGoLimits(source, errors), VALID_LIMITS);
+      assert.deepEqual(errors, []);
+    }
+  });
+
+  it('rejects a derived constant detached from its tracked cap', () => {
+    for (const detached of ['dependsOnMaxDepth + 2', '11', 'MaxPorts + 1']) {
+      const errors = [];
+      assert.equal(
+        parseGoLimits(
+          VALID_GO_SOURCE.replace('dependsOnMaxDepth + 1', detached),
+          errors,
+        ),
+        undefined,
+      );
+      assert.match(
+        errors.join('\n'),
+        /MaxDependencyLevels must stay "dependsOnMaxDepth \+ 1"/,
+      );
+    }
+  });
+
+  it('rejects a duplicate derived constant', () => {
+    const errors = [];
+    assert.equal(
+      parseGoLimits(
+        `${VALID_GO_SOURCE}\nconst MaxDependencyLevels = dependsOnMaxDepth + 1\n`,
+        errors,
+      ),
+      undefined,
+    );
+    assert.match(
+      errors.join('\n'),
+      /MaxDependencyLevels must have at most one declaration/,
+    );
   });
 
   it('rejects leading-zero duration factors that Go interprets as octal', () => {
