@@ -3,15 +3,14 @@
 [ENG-1028](https://linear.app/liftedinit/issue/ENG-1028) prepared this repository
 against Fred revision `4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234` from
 [PR #240](https://github.com/manifest-network/fred/pull/240). The submodule and
-generated manifest artifacts now use Fred `main` at
-`ea12d3b95669f7cee5bfe3b2aaf09709098852a8` (PR #298), 12 commits after the
-`v0.14.1` tag `aa138cf`. It adds
+generated manifest artifacts now use the Fred `v0.14.2` tag
+`3172ee2fb92a8d12cfb5308ee72aa264182db6cd`. It adds
 [PR #242](https://github.com/manifest-network/fred/pull/242), which fixes
 [ENG-1055](https://linear.app/liftedinit/issue/ENG-1055),
 [PR #243](https://github.com/manifest-network/fred/pull/243), the operator
 controls of [PR #244](https://github.com/manifest-network/fred/pull/244) and
 [PR #245](https://github.com/manifest-network/fred/pull/245), PRs #247
-through #298, and the release cuts (#258, #286) to PR #240's merge.
+through #305, and the release cuts (#258, #286, #304) to PR #240's merge.
 Runtime clients continue defaulting to released Fred v0.13; PR240 behavior
 requires explicit opt-in. Fred v0.14 is the first release with the PR240
 contract. The final `v0.14.0` tag is the `v0.14.0-rc.1` commit `5f3341e`.
@@ -109,7 +108,7 @@ The local devnet independently defaults to `FRED_COMPATIBILITY=pr240`; this does
 not change the SDK/MCP default. Its v0.13 mode uses a separate legacy backend
 topology. Never start either mode against the other version's persisted authority.
 
-The PR240 devnet builds Go 1.26.10 and includes `placement-preflight`. CI installs a
+The PR240 devnet builds Go 1.26.11 and includes `placement-preflight`. CI installs a
 pinned compatible Docker daemon before checking the required server API floor.
 The devnet launcher seals a fresh backend storage identity and runs the backend
 natively on the Docker host under systemd. Stateful backend containers are
@@ -220,15 +219,22 @@ neither reaches these refusals on its own. An upload refusal is reported as an
 upload failure, and a restore refusal keeps the restore POST's in-doubt
 handling. The manifest schema, limits and Go floor are unchanged.
 
-PRs #287 through #298 follow v0.14.1 on `main` and are unreleased. One is
-tenant-visible, PR #298 (ENG-2130): a `REJECTED` lease with retained data is
-now an eligible restore source alongside `CLOSED` and `EXPIRED`. Released
-providers, v0.14.1 included, still answer such a restore with
-`404 no retained data found`. `restore_app` does not check the source's chain
-state, so it needs no change. Until a Fred release carries PR #298, `app_status`
-keeps querying the provider only for `PENDING`, `ACTIVE`, `CLOSED` and `EXPIRED`
-leases, and the tool text keeps naming `CLOSED` and `EXPIRED` sources. The other
-PRs are provider-side: panic boundaries around maintenance recovery and chain
+v0.14.2 carries PRs #287 through #305. Two are tenant-visible. PR #298
+(ENG-2130): a `REJECTED` lease with retained data is now an eligible restore
+source alongside `CLOSED` and `EXPIRED`. Providers on v0.14.1 or earlier still
+answer such a restore with `404 no retained data found`, after `restore_app`
+has created the new lease. `restore_app` does not check the source's chain
+state, so it needs no change. Until providers run v0.14.2, `app_status` keeps
+querying the provider only for `PENDING`, `ACTIVE`, `CLOSED` and `EXPIRED`
+leases, and the tool text keeps naming `CLOSED` and `EXPIRED` sources. PR #305
+(ENG-2161): a restore, restart or update that arrives while a reconciliation
+sweep is still collecting backend inventory answers `503` with
+`reason: inventory_reconciling` and `Retry-After: 1`, where it previously got
+the generic `503`. Fred refuses it before recording anything. A restart or
+update reports the reason as `details.provider_reason` and keeps the uncertain
+outcome of any `503`; a restore keeps the restore POST's in-doubt handling.
+The PR240 devnet maintenance harness joins it with the same key, as it does the
+generic `503`. The other PRs are provider-side: panic boundaries around maintenance recovery and chain
 inventory reads (#287), frozen v0.13 retention sizing (#288), a non-zero
 providerd exit when a component fails (#289), closes that outlive their request
 with a `503 lifecycle_pending` answer to a still-running `/deprovision` (#290),
@@ -236,7 +242,12 @@ with a `503 lifecycle_pending` answer to a still-running `/deprovision` (#290),
 (#292, #294), a test fix (#293), redispatched deaths that race Ready after a
 restart, update or restore (#295), no timeout rejection after an authenticated
 Success callback (#296), and acknowledgment batches that retry their eligible
-members (#297). The manifest schema and Go floor are unchanged. `manifest.go`
+members (#297), a bounded `method` label on the API request metrics and a
+64 KiB request-header limit (#299), Go 1.26.11 (#301), and docker-backend
+recovery passes that no longer stop on a close that superseded a cohort
+divergence (#302) or report a just-completed close as failed (#300). Fred's
+Go floor rises to 1.26.11, so the devnet builder moves with it. The manifest
+schema is unchanged. `manifest.go`
 adds `MaxDependencyLevels`, defined as `dependsOnMaxDepth + 1` to size
 docker-backend's close budget. The schema sync acknowledges it as a derived
 constant instead of recording a new limit, and fails if the definition changes.
