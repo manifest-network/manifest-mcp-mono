@@ -276,8 +276,8 @@ maintenance headers fit each provider's CORS policy; these are not a browser run
 
 `e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
 the latest live status/release observation. That observation records its Fred
-revision and run; it now comes from the green full E2E run at Fred `main`
-`ea12d3b`, whose key sets match the `aa138cf` (v0.14.1), `5f3341e`, `4e99b8f`,
+revision and run; it now comes from the green full E2E run at the Fred `v0.14.2`
+tag `3172ee2`, whose key sets match the `ea12d3b`, `aa138cf` (v0.14.1), `5f3341e`, `4e99b8f`,
 `9388c86` and `9c063b4` observations. Those status and
 diagnostics key sets add only `terminal_budget` to the earlier `315ed5a`,
 `8a26371` and `4f00091` observations. The golden lists that key as conditional,
