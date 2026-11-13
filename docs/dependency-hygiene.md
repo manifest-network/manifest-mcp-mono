@@ -258,6 +258,19 @@ down by the measured saving and keeps its previous headroom.
 | `/deploy` | 1,118,175 | 1,042,374 | 1,042,411 | 37 |
 | root client | 1,106,935 | 1,030,837 | 1,030,855 | 18 |
 
+The 2026-11-13 update to rolldown 1.2.19 and size-limit 14.3.0 shrinks three
+bundles. Measured against `main` at `cb90b48` under the previous rolldown 1.2.15
+and size-limit 14.2.0, each budget again ratchets down by the saving and keeps the
+headroom it had there. `/deploy` and the root client had none left, so they keep
+none.
+
+| SDK entry | Before (gzip bytes) | After | New budget | Preserved headroom |
+| --- | ---: | ---: | ---: | ---: |
+| `/reads` | 1,590 | 1,590 | 2,977 | 1,387 |
+| `/catalog` | 27,206 | 26,831 | 26,851 | 20 |
+| `/deploy` | 1,043,192 | 1,042,080 | 1,042,080 | 0 |
+| root client | 1,031,074 | 1,029,214 | 1,029,214 | 0 |
+
 The namespace-import reduction leaves large crypto and codegen costs that need
 upstream work:
 

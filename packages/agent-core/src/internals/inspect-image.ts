@@ -184,7 +184,7 @@ export async function inspectImage(
     const c = (configBlob.config ?? {}) as Record<string, unknown>;
 
     const out: ImageInfo = {
-      image: `${parsed.registry}/${parsed.name}${parsed.digest ? '@' + parsed.digest : ':' + (parsed.tag ?? 'latest')}`,
+      image: `${parsed.registry}/${parsed.name}${parsed.digest ? `@${parsed.digest}` : `:${parsed.tag ?? 'latest'}`}`,
       digest: manifestRes.digest ?? parsed.digest ?? null,
       ports: pickPorts(c.ExposedPorts),
       env: parseEnv(c.Env),

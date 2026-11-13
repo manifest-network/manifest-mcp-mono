@@ -13,7 +13,7 @@
     "import": "{ resolveSku }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "27226 B"
+    "limit": "26851 B"
   },
   {
     "name": "manifest-sdk /deploy",
@@ -21,7 +21,7 @@
     "import": "{ deployApp }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "1043192 B"
+    "limit": "1042080 B"
   },
   {
     "name": "manifest-sdk root client",
@@ -29,6 +29,6 @@
     "import": "{ createManifestClient }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "1031074 B"
+    "limit": "1029214 B"
   }
 ]
