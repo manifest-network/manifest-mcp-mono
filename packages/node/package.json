@@ -51,12 +51,12 @@
     "@manifest-network/manifest-mcp-lease": "0.24.0",
     "@manifest-network/manifest-mcp-cosmwasm": "0.24.0",
     "@manifest-network/manifest-mcp-fred": "0.24.0",
-    "@modelcontextprotocol/sdk": "1.32.1",
-    "dotenv": "18.0.8"
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "dotenv": "18.0.10"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
     "typescript": "5.9.3",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   }
 }
