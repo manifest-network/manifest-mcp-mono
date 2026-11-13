@@ -23,7 +23,7 @@ npm install @manifest-network/manifest-mcp-fred
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
-| `restore_app` | Restore a CLOSED or EXPIRED app with retained data onto a fresh lease |
+| `restore_app` | Restore a CLOSED, EXPIRED or REJECTED app with retained data onto a fresh lease |
 | `app_diagnostics` | Get chain state and surviving provider provision diagnostics, including terminal leases |
 | `app_releases` | Get release/version history for a deployed app (20 most recent; the stored manifest is omitted, its size reported as `manifest_bytes`) |
 

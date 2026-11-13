@@ -350,7 +350,7 @@ MCP operators select the mode with `MANIFEST_FRED_COMPATIBILITY=pr240`, `v0.13`,
 
 ## Restoring a closed lease
 
-When a lease is CLOSED or EXPIRED and the provider still reports its data as retained, `restoreApp` recovers them onto a **fresh** lease. It is a free function on `/deploy` — **not** a bound `client.*` method — but the `FredClient` *is* a `FredAuthCtx`, so pass the client directly as the first arg:
+When a lease is CLOSED, EXPIRED or REJECTED and the provider still reports its data as retained, `restoreApp` recovers them onto a **fresh** lease. It is a free function on `/deploy` — **not** a bound `client.*` method — but the `FredClient` *is* a `FredAuthCtx`, so pass the client directly as the first arg:
 
 ```ts
 import { restoreApp } from '@manifest-network/manifest-sdk/deploy';

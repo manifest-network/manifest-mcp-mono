@@ -221,12 +221,12 @@ handling. The manifest schema, limits and Go floor are unchanged.
 
 v0.14.2 carries PRs #287 through #305. Two are tenant-visible. PR #298
 (ENG-2130): a `REJECTED` lease with retained data is now an eligible restore
-source alongside `CLOSED` and `EXPIRED`. Providers on v0.14.1 or earlier still
-answer such a restore with `404 no retained data found`, after `restore_app`
-has created the new lease. `restore_app` does not check the source's chain
-state, so it needs no change. Until providers run v0.14.2, `app_status` keeps
-querying the provider only for `PENDING`, `ACTIVE`, `CLOSED` and `EXPIRED`
-leases, and the tool text keeps naming `CLOSED` and `EXPIRED` sources. PR #305
+source alongside `CLOSED` and `EXPIRED`. v0.14.0 and v0.14.1 answered such a
+restore with `404 no retained data found`, after `restore_app` had created the
+new lease; v0.13 has no chain-state gate on the source. Now that providers on
+v0.14.1 run v0.14.2, `app_status` also queries the provider for `REJECTED`
+leases, and the tool text and guides name `REJECTED` sources. `restore_app`
+does not check the source's chain state, so it needs no change. PR #305
 (ENG-2161): a restore, restart or update that arrives while a reconciliation
 sweep is still collecting backend inventory answers `503` with
 `reason: inventory_reconciling` and `Retry-After: 1`, where it previously got

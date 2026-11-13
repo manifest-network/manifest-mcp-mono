@@ -93,7 +93,7 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
-| `restore_app` | Restore a closed/retained app onto a fresh lease within the grace window |
+| `restore_app` | Restore a closed, expired or rejected app with retained data onto a fresh lease within the grace window |
 | `app_diagnostics` | Get chain state and available provider diagnostics, including terminal leases |
 | `app_releases` | Get release/version history for a deployed app (20 most recent; the stored manifest is omitted, its size reported as `manifest_bytes`) |
 

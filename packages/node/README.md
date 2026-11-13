@@ -273,7 +273,7 @@ are treated as ordinary environment data; `DOTENV_KEY` does not activate
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
-| `restore_app` | Recover a CLOSED or credit-exhausted lease's retained volumes onto a fresh lease |
+| `restore_app` | Recover a CLOSED (e.g. credit-exhausted), EXPIRED or REJECTED lease's retained volumes onto a fresh lease |
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
 | `app_releases` | Get release/version history for a deployed app (20 most recent; the stored manifest is omitted, its size reported as `manifest_bytes`) |
 
