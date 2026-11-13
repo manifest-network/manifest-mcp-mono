@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-13
+
+### Migration notes
+
+- **Lockstep upgrade:** update directly installed `@manifest-network/manifest-mcp-*`, `@manifest-network/manifest-agent-core`, and `@manifest-network/manifest-sdk` packages together to `0.25.0`. Internal peers target `^0.25.0`; applications using `^0.24.0` must widen their ranges, because a 0.x caret range does not admit the next minor.
+- **Security fixes reach installations only through this release:** core's exact pin moves to `undici` 8.12.4 (GHSA-mqg3-3v4r-cm32 and five moderate advisories). Mono's guarded fetch uses none of the affected undici features, but installations of 0.24.0 keep 8.12.3, which their audits report as high, until they upgrade.
+- **Restore sources:** `app_status` reports retained data for a `REJECTED` lease, and `restore_app` names it as a source. Fred v0.14.2 accepts one, and Fred v0.13 restores whatever its backend reports as retained. Fred v0.14.0 and v0.14.1 answer `404` after the new lease has been created, so do not restore from a `REJECTED` lease on a provider still running either.
+- **Fred compatibility:** the default stays `v0.13`. Map providers running Fred v0.14 to `pr240`; a v0.14.2 provider can also answer a maintenance command with `503 reason: inventory_reconciling`, which keeps the uncertain outcome of any `503`.
+
 ### Added
 
 - **fred, sdk:** `app_status` (and the SDK's `appStatus`) now queries the provider for a `REJECTED` lease too, so it surfaces that lease's retention metadata. The `app_status` and `restore_app` tool text, the READMEs, the library guide and the tool-selection guide name `REJECTED` alongside `CLOSED` and `EXPIRED` as a restore source. Fred v0.14.2 (PR #298, ENG-2130) accepts a retained `REJECTED` lease as a restore source; data can be retained under one when a provision or restore commits after a timeout rejection. Fred v0.14.0 and v0.14.1 refused such a restore with `404` after `restore_app` had created the new lease, so this waited until providers on those versions moved to v0.14.2. Fred v0.13 has no chain-state gate on the source: it restores whatever its backend reports as retained. `restore_app` itself does not check the source's chain state and is unchanged.
@@ -630,7 +639,8 @@ Initial public release.
 - Biome for formatting, linting, and import sorting
 - Tag-triggered npm publish workflow with provenance
 
-[Unreleased]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.21.0...v0.22.0
