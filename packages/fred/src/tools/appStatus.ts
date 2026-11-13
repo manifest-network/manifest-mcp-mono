@@ -51,15 +51,17 @@ export async function appStatus(
   let providerError: string | undefined;
   let connectionError: string | undefined;
 
-  // Query the provider for retention on CLOSED and EXPIRED leases too (retained
-  // volumes live only there). Connection info is meaningless for a non-running
-  // lease, so it stays PENDING/ACTIVE-only.
+  // Query the provider for retention on CLOSED, EXPIRED and REJECTED leases too
+  // (retained volumes live only there; a REJECTED lease can retain data since
+  // Fred v0.14.2). Connection info is meaningless for a non-running lease, so it
+  // stays PENDING/ACTIVE-only.
   const st = lease.state;
   const wantsStatus =
     st === LeaseState.LEASE_STATE_PENDING ||
     st === LeaseState.LEASE_STATE_ACTIVE ||
     st === LeaseState.LEASE_STATE_CLOSED ||
-    st === LeaseState.LEASE_STATE_EXPIRED;
+    st === LeaseState.LEASE_STATE_EXPIRED ||
+    st === LeaseState.LEASE_STATE_REJECTED;
   const wantsConnection =
     st === LeaseState.LEASE_STATE_PENDING ||
     st === LeaseState.LEASE_STATE_ACTIVE;

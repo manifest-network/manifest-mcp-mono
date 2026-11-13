@@ -308,7 +308,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_status',
     {
       description:
-        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL. A CLOSED or EXPIRED lease may have retained data: check provision_status/items/restore_hint and, when present, retained_until before using restore_app.',
+        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL. A CLOSED, EXPIRED or REJECTED lease may have retained data: check provision_status/items/restore_hint and, when present, retained_until before using restore_app.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -966,13 +966,13 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'restore_app',
     {
       description:
-        'Restore a CLOSED or EXPIRED app from its retained volumes. PRECONDITION: the provider must report "retained" — check app_status/app_diagnostics and restore_hint first. retained_until is optional when age-based expiry is disabled. This BROADCASTS: it CREATES A NEW lease (reserving credit) and adopts the retained data onto it. NON-IDEMPOTENT — each call creates a new lease; do not blind-retry. (Contrast restart_app, which restarts an existing app without creating a lease.)',
+        'Restore a CLOSED, EXPIRED or REJECTED app from its retained volumes. PRECONDITION: the provider must report "retained" — check app_status/app_diagnostics and restore_hint first. retained_until is optional when age-based expiry is disabled. This BROADCASTS: it CREATES A NEW lease (reserving credit) and adopts the retained data onto it. NON-IDEMPOTENT — each call creates a new lease; do not blind-retry. (Contrast restart_app, which restarts an existing app without creating a lease.)',
       inputSchema: {
         source_lease_uuid: z
           .string()
           .uuid()
           .describe(
-            'UUID of the CLOSED/credit-exhausted lease whose retained volumes to restore (find it via app_status when its state is retained). A fresh lease is created for you.',
+            'UUID of the CLOSED (e.g. credit-exhausted), EXPIRED or REJECTED lease whose retained volumes to restore (find it via app_status when its provision_status is retained). A fresh lease is created for you.',
           ),
       },
       outputSchema: {

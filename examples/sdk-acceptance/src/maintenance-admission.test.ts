@@ -7,6 +7,12 @@ import {
 
 // Fred's tenant body for every maintenance 503, including backend contention.
 const UNAVAILABLE = 'service temporarily unavailable';
+// Fred v0.14.2 (ENG-2161): placement refused before recording anything.
+const RECONCILING = {
+  error: 'the provider is reconciling its inventory; retry shortly',
+  code: 503,
+  reason: 'inventory_reconciling',
+};
 
 function refusal(
   key: string | undefined,
@@ -205,15 +211,18 @@ describe('pinned devnet admission recovery', () => {
   });
 
   it.each([
-    ['restart', 'restarting'],
-    ['update', 'updating'],
+    ['restart', 'restarting', { error: UNAVAILABLE, code: 503 }],
+    ['update', 'updating', { error: UNAVAILABLE, code: 503 }],
+    ['restart', 'restarting', RECONCILING],
+    ['update', 'updating', RECONCILING],
   ] as const)(
-    'joins a pending %s 503 with the same key, bytes, and fresh authentication',
-    async (operation, status) => {
+    'joins a pending %s 503 with the same key, bytes, and fresh authentication (%s, %j)',
+    async (operation, status, body) => {
       const key = 'a11ce000-0000-4000-8000-000000000003';
       const unavailable = () =>
-        new Response(JSON.stringify({ error: UNAVAILABLE, code: 503 }), {
+        new Response(JSON.stringify(body), {
           status: 503,
+          headers: 'reason' in body ? { 'Retry-After': '1' } : {},
         });
       const fetch = vi
         .fn()
@@ -464,6 +473,18 @@ describe('pinned devnet admission recovery', () => {
     [UNAVAILABLE, 503, '<html>503 Service Temporarily Unavailable</html>'],
     [UNAVAILABLE, 503, `{"error":"${UNAVAILABLE}"`],
     [UNAVAILABLE, 503, `{"error":"${UNAVAILABLE}","code":409}`],
+    [UNAVAILABLE, 503, JSON.stringify({ ...RECONCILING, code: 409 })],
+    [
+      UNAVAILABLE,
+      503,
+      JSON.stringify({ ...RECONCILING, reason: 'inventory_reconciled' }),
+    ],
+    // The reason is a 503 answer; it never makes a 409 retryable.
+    [
+      'invalid state for update',
+      409,
+      JSON.stringify({ ...RECONCILING, code: 409 }),
+    ],
   ] as const)(
     'refuses malformed or mismatched provider body %s %s %s',
     async (body, status, raw) => {

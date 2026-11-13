@@ -180,6 +180,31 @@ describe('appStatus', () => {
     expect(mockGetAuthToken).toHaveBeenCalledTimes(1);
   });
 
+  // Fred v0.14.2 (#298, ENG-2130): provision or restore work that commits after
+  // a timeout rejection can retain data under the REJECTED lease, and it is an
+  // eligible restore source.
+  it('reads retained data for a rejected lease without a connection request', async () => {
+    routeWire({
+      state: 'LEASE_STATE_REJECTED',
+      provision_status: 'retained',
+      retained_until: '2026-12-01T00:00:00Z',
+      restore_hint: 'restore me',
+    });
+
+    const result = await run(makeCtx(makeQc(LeaseState.LEASE_STATE_REJECTED)));
+
+    expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_REJECTED);
+    expect(result.fredStatus).toMatchObject({
+      state: LeaseState.LEASE_STATE_REJECTED,
+      provision_status: 'retained',
+      retained_until: '2026-12-01T00:00:00Z',
+      restore_hint: 'restore me',
+    });
+    expect(result.connection).toBeUndefined();
+    expect(wire.calls).toHaveLength(1);
+    expect(callTo('/status')).toBeDefined();
+  });
+
   it('DROPS a malformed/injected retained_until instead of leaking it raw past the sanitizer (ENG-555)', async () => {
     routeWire({
       state: 'LEASE_STATE_CLOSED',

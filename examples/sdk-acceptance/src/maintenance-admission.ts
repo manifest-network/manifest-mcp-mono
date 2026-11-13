@@ -63,8 +63,8 @@ function legacyAdmissionRefusal(error: unknown, operation: Operation): boolean {
 }
 
 /**
- * Devnet harness only, tied to the pinned Fred main ea12d3b (its 503 semantics
- * come from PRs #242 and #243). Never use this policy for an unknown provider
+ * Devnet harness only, tied to the pinned Fred v0.14.2 3172ee2 (its 503 semantics
+ * come from PRs #242, #243 and #305). Never use this policy for an unknown provider
  * or an earlier uncertain attempt. Recognized answers
  * for the current key (placement/maintenance_application.go, api/handlers.go):
  * - 409 claim-busy: other lifecycle work held the lease before this command was
@@ -79,6 +79,10 @@ function legacyAdmissionRefusal(error: unknown, operation: Operation): boolean {
  *   pending command, so only the same key may follow; a same-key replay is safe
  *   in every case, and the bounded budget rethrows the final 503 unchanged.
  *   Release history can change while it runs.
+ * - 503 reason 'inventory_reconciling' (ENG-2161): placement refused the
+ *   command before recording it while an inventory sweep is still collecting.
+ *   Before v0.14.2 this was the generic 503 above. Repeating the same key is
+ *   safe, so it is handled as pending.
  */
 export async function submitDevnetMaintenance<T>(options: {
   operation: Operation;
@@ -147,7 +151,8 @@ function admissionRefusal(
     const body = JSON.parse(failure.message.slice(marker + 8));
     if (body.code !== status) return undefined;
     if (status === 503)
-      return body.error === 'service temporarily unavailable'
+      return body.error === 'service temporarily unavailable' ||
+        body.reason === 'inventory_reconciling'
         ? 'pending'
         : undefined;
     if (body.error === 'lease is already undergoing a lifecycle operation')

@@ -234,11 +234,12 @@ export async function updateLease(
  * fetchJsonChecked throws ProviderApiError for any non-2xx or malformed success body.
  * restoreApp treats every such error as unknown adoption: HTTP status/prose cannot
  * authorize compensation. Fred's answer space here: 404 not-retained (through v0.14.1 also any
- * REJECTED source; Fred #298 makes a retained one eligible), 409 not PENDING or already
+ * REJECTED source; v0.14.2 makes a retained one eligible), 409 not PENDING or already
  * provisioned (since v0.14.1 also `target_has_payload`, a target that received an upload),
  * 422 demote-exceeds-tier OR any other refusal code the backend authored
  * (widened in ENG-620 — a 422 no longer implies "demote"), 429 throttled, 502 the
- * backend's error body was off-contract (ENG-620/ENG-739), 503 placement unresolvable.
+ * backend's error body was off-contract (ENG-620/ENG-739), 503 placement unresolvable
+ * (since v0.14.2 also `inventory_reconciling`, refused before anything was recorded).
  * This response contract has no structured non-adoption verdict for safe rollback.
  */
 export async function restoreLease(
